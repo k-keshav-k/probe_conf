@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inside one layer: the hidden state and the MLP selection features</title>
+<style>
+:root{
+  --ink:#1b1b1b; --mut:#5b6570; --line:#e2e6ea; --bg:#f7f8fa; --card:#ffffff;
+  --hidden:#4C72B0; --mlp:#DD8452; --combined:#55A868; --conf:#9e9e9e;
+  --ok:#2E7D32; --bad:#C62828;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  color:var(--ink);background:var(--bg);line-height:1.55;font-size:16px}
+header{padding:26px 22px 14px;max-width:1180px;margin:0 auto}
+h1{margin:0 0 6px;font-size:1.55em;line-height:1.25}
+.sub{margin:0;color:var(--mut)}
+.hint{margin:8px 0 0;color:var(--mut);font-size:.93em}
+.controls{position:sticky;top:0;z-index:20;background:#fffffff2;backdrop-filter:blur(6px);
+  border-bottom:1px solid var(--line);padding:10px 22px}
+.controls-inner{max-width:1180px;margin:0 auto;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+.ctrlgroup{display:flex;align-items:center;gap:8px}
+.ctrlgroup label{font-size:.88em;color:var(--mut)}
+input[type=range]{width:210px}
+button{font:inherit;border:1px solid var(--line);background:#fff;color:var(--ink);
+  border-radius:8px;padding:6px 11px;cursor:pointer}
+button:hover{border-color:#b9c2cc}
+button.active{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+button.small{font-size:.86em;padding:4px 9px}
+main{max-width:1180px;margin:0 auto;padding:18px 22px 70px}
+section{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:18px 0}
+h2{margin:0 0 8px;font-size:1.22em}
+h3{margin:18px 0 6px;font-size:1.02em}
+p{margin:.5em 0}
+.grid{display:grid;gap:20px}
+.grid.two{grid-template-columns:340px 1fr}
+@media (max-width:900px){.grid.two{grid-template-columns:1fr}}
+.note{color:var(--mut);font-size:.9em}
+.chartbox{background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px}
+svg{display:block;max-width:100%;height:auto}
+#layer-list{max-height:430px;overflow:auto;border:1px solid var(--line);border-radius:10px}
+.layerrow{display:flex;align-items:center;gap:8px;width:100%;border:0;border-bottom:1px solid #f0f2f5;
+  background:#fff;padding:5px 8px;border-radius:0;text-align:left}
+.layerrow:hover{background:#f3f6fa}
+.layerrow.selected{background:#eaf1fb;outline:2px solid var(--hidden);outline-offset:-2px}
+.lnum{width:24px;color:var(--mut);font-size:.82em;text-align:right}
+.minibars{flex:1;display:flex;flex-direction:column;gap:3px}
+.mini{display:block;height:6px;background:#eef1f4;border-radius:3px;overflow:hidden}
+.mini i{display:block;height:100%;border-radius:3px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:.88em;color:var(--mut);margin-top:6px}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.steps{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 14px}
+.pipe{display:flex;gap:6px;align-items:stretch;flex-wrap:wrap}
+.pipe .pbox{flex:1;min-width:150px;border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;
+  background:#fbfcfd;font-size:.92em}
+.pipe .pbox.active{border-color:var(--mlp);background:#fdf3ec;box-shadow:0 0 0 3px #dd84522a}
+.pipe .pnum{font-size:.78em;color:var(--mut)}
+.example-note{background:#f8fafc;border-left:3px solid var(--mlp);padding:8px 12px;border-radius:0 8px 8px 0;margin:8px 0 14px;font-size:.94em}
+.statgroup{margin-top:20px}
+.statgroup h3{display:flex;justify-content:space-between;gap:10px;align-items:baseline;border-bottom:1px solid var(--line);padding-bottom:5px}
+.gdesc{color:var(--mut);font-weight:400;font-size:.85em}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin-top:10px}
+.stat{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fff}
+.stat .sname{font-weight:600;font-size:.94em}
+.stat .sdesc{color:var(--mut);font-size:.84em;margin:2px 0 8px}
+.vals{display:grid;gap:5px}
+.valrow{display:grid;grid-template-columns:112px 1fr 62px;align-items:center;gap:8px;font-size:.86em}
+.valrow .tag{color:var(--mut)}
+.valrow .num{text-align:right;font-variant-numeric:tabular-nums}
+.bar{position:relative;height:10px;background:#eef1f4;border-radius:5px;overflow:hidden}
+.bar .fill{position:absolute;top:0;bottom:0;border-radius:5px}
+.bar.center::before{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;background:#c9d0d7}
+.fill.ok{background:var(--ok)} .fill.bad{background:var(--bad)}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.badge{border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:.84em;background:#fff}
+.badge b{font-variant-numeric:tabular-nums}
+.rawgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:800px){.rawgrid{grid-template-columns:1fr}}
+.rawbox{border:1px solid var(--line);border-radius:12px;padding:14px;background:#fff}
+.dots{display:grid;grid-template-columns:repeat(30,1fr);gap:3px;margin:10px 0}
+.dots span{display:block;aspect-ratio:1;background:#d9e2ee;border-radius:2px}
+.dots.few{grid-template-columns:repeat(17,1fr);max-width:330px}
+.dots.few span{background:#f0d9c9}
+.words{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.word{border-bottom:1px solid #eef1f4;padding-bottom:7px}
+.word b{font-size:.95em}
+.word div{color:var(--mut);font-size:.87em}
+footer{max-width:1180px;margin:0 auto;padding:0 22px 50px;color:var(--mut);font-size:.86em}
+kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:0 5px;font-size:.85em;background:#fff}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Inside one layer: the hidden state and the MLP selection features</h1>
+  <p class="sub">An interactive view of the offline pilot. Model: Qwen2.5-7B-Instruct. Data: 1,087 questions from four PopQA relations.</p>
+  <p class="hint">Move the layer slider. Press the buttons. Read the numbers. The page uses real data from the pilot.</p>
+  <p class="hint"><b>Gold dependency:</b> The answer position contains a supplied gold token. All 17-feature sets also include five gold-dependent calculations. AUROC concerns the label fraction correct ≥ 0.5.</p>
+  <p class="hint"><b>New to the method?</b> Start with the picture story <a href="FLOW.html">FLOW.html</a>. It shows the flow from text to the 17 numbers, step by step.</p>
+</header>
+
+<div class="controls">
+  <div class="controls-inner">
+    <div class="ctrlgroup">
+      <label for="layer">Layer</label>
+      <input id="layer" type="range" min="0" max="27" value="18">
+      <strong id="layer-label">18</strong>
+    </div>
+    <div class="ctrlgroup">
+      <label>Position</label>
+      <button id="pos-ans" class="small">Supplied gold-token position</button>
+      <button id="pos-last" class="small">Last prompt token</button>
+    </div>
+    <div class="ctrlgroup">
+      <label>Example</label>
+      <button id="ex-correct" class="small">Correct answer</button>
+      <button id="ex-wrong" class="small">Wrong answer</button>
+    </div>
+  </div>
+</div>
+
+<main>
+
+<section id="layers">
+  <h2>1. The model has 28 layers. We record data at each layer.</h2>
+  <p>The model has 28 transformer layers. We record two signals at each layer. Signal 1 is the <b>hidden state</b>. Signal 2 is the <b>MLP selection features</b>. Select a layer in the list or move the slider. The chart shows the AUROC for each signal at each layer.</p>
+  <div class="grid two">
+    <div>
+      <div id="layer-list" role="list"></div>
+      <div class="legend"><span><i style="background:var(--hidden)"></i>Hidden state</span><span><i style="background:var(--mlp)"></i>MLP features</span></div>
+    </div>
+    <div>
+      <div class="chartbox" id="layer-chart"></div>
+      <p id="layer-text"></p>
+      <p class="note">A large AUROC means that the signal predicts correct answers well. 0.5 is chance.</p>
+    </div>
+  </div>
+</section>
+
+<section id="mlp">
+  <h2>2. Inside one MLP</h2>
+  <p>The MLP receives a normalized residual vector after attention. The first four buttons show its computation. The fifth shows feature calculation.</p>
+  <div class="steps" id="step-buttons"></div>
+  <div class="pipe" id="pipe"></div>
+  <div class="example-note" id="example-note"></div>
+  <div class="chartbox" id="step-data"></div>
+  <p class="note" id="step-text"></p>
+  <p class="note">These two questions are single examples. One example does not prove the rule. The probe learns the pattern from 1,087 questions.</p>
+</section>
+
+<section id="numbers">
+  <h2>3. The 17 numbers</h2>
+  <p>These 17 numbers describe the MLP selection process for one layer and one position. The cards compare the two example questions. Use the controls at the top of the page. The cards change with your selection.</p>
+  <div id="stats-groups"></div>
+</section>
+
+<section id="raw">
+  <h2>4. Raw vectors: all layers saved, five layers probed</h2>
+  <p>We saved raw MLP vectors at all 28 layers and both positions. The probe sweep uses five layers. Gate and selection vectors have 18,944 values. MLP outputs have 3,584 values. The 17 summaries use several tensors and gold-dependent projections.</p>
+  <div class="rawgrid">
+    <div class="rawbox">
+      <div class="dots" id="dots-raw"></div>
+      <b>Raw vector:</b> 18,944 numbers. One small square shows many numbers.
+    </div>
+    <div class="rawbox">
+      <div class="dots few" id="dots-few"></div>
+      <b>Summary:</b> 17 numbers. These numbers go to the probe.
+    </div>
+  </div>
+  <div class="badges" id="raw-badges"></div>
+  <h3>The tested raw-vector comparison</h3>
+  <p>The PCA-256 selection-vector probe gave AUROC <b id="raw-a"></b>. The hidden probe gave <b id="hid-a"></b>. The 17-feature probe gave <b id="mlp-a"></b>. The combined probe gave <b id="comb-a"></b>. Different layers and transformations enter this comparison. It does not prove that nonlinear summaries are necessary.</p>
+</section>
+
+<section id="words">
+  <h2>5. Words in this page</h2>
+  <div class="words" id="word-list"></div>
+</section>
+
+</main>
+
+<footer>
+  <p>Source: <code>probe_conf</code> pilot run, September 2026. Full report: <code>report/REPORT.md</code>.</p>
+</footer>
+
+<script>
+const D = __DATA__;
+const COL = {hidden:"#4C72B0", mlp:"#DD8452", ok:"#2E7D32", bad:"#C62828"};
+const state = {layer:18, pos:"ans", example:"correct", step:0};
+
+const STAT_TEXT = {
+  ent_gate:["Pre-activation softmax entropy","Entropy of softmax(gate_pre), not entropy of SiLU values."],
+  ent_gate_sq:["Pre-activation energy entropy","Entropy of normalized squares, not softmax of squared pre-activations."],
+  active_frac:["Positive pre-activation fraction","Fraction with gate_pre > 0. SiLU gates are not binary."],
+  top5_gate:["Top-five energy fraction","Squared mass in the five largest magnitudes, including negative values."],
+  gini_gate:["Absolute pre-activation Gini","Inequality of absolute pre-activation magnitudes."],
+  max_gate:["Maximum signed pre-activation","Largest signed gate_proj output."],
+  kurt_gate:["Pre-activation kurtosis","Fourth central moment divided by squared variance."],
+  ent_sel_sq:["Selection energy entropy","Entropy of normalized squared selection activations."],
+  l2_sel:["Selection-vector norm","Norm of SiLU(gate_pre) multiplied by the up projection."],
+  l2_down:["Norm of the MLP write","The size of the data that the MLP adds."],
+  down_norm_ratio:["Write ratio","The size of the write divided by the size of the hidden state."],
+  cos_down_h:["Write direction","How much the write agrees with the hidden state."],
+  cos_sel_agold:["Alignment with the correct answer","How much the gated write points to the correct answer."],
+  proj_gold_norm:["Normalized gold-token projection","Signed local projection divided by output-vector and gold-row norms."],
+  mlp_margin:["Local gold-token margin","Gold-token local score minus the largest other candidate-token score."],
+  ent_cand:["Candidate-token entropy","Entropy over top-50 tokens plus gold. The set depends on the gold token."],
+  logit_mlp_gold:["Local gold-token score","Dot product of the MLP output with the gold-token output-head row."]
+};
+const GROUPS = [
+  {name:"Gate pre-activations (7 numbers)",desc:"Distribution before SiLU",stats:["ent_gate","ent_gate_sq","active_frac","top5_gate","gini_gate","max_gate","kurt_gate"]},
+  {name:"The MLP write (5 numbers)",desc:"What does the MLP send back?",stats:["ent_sel_sq","l2_sel","l2_down","down_norm_ratio","cos_down_h"]},
+  {name:"Gold-token alignment (2 numbers)",desc:"Gold-dependent projections",stats:["cos_sel_agold","proj_gold_norm"]},
+  {name:"Candidate tokens (3 numbers)",desc:"Gold-dependent local scores",stats:["mlp_margin","ent_cand","logit_mlp_gold"]}
+];
+const STEPS = [
+  {name:"1. Gate projection",text:"The normalized MLP input passes through gate_proj. It produces 18,944 signed pre-activations. The bars show the largest signed values. Each value need not represent a fact."},
+  {name:"2. Apply SiLU",text:"SiLU changes each pre-activation. Negative inputs can produce negative nonzero outputs. This is a smooth transformation, not an open or closed switch."},
+  {name:"3. Multiply with up projection",text:"The model computes u = up_proj(x). It forms s = SiLU(gate_pre) multiplied elementwise by u. No sum occurs at this step."},
+  {name:"4. Project and add",text:"The down projection maps s to a 3,584-value output w. The layer adds w to the residual state after attention. Hooks copy s and w separately."},
+  {name:"5. Compute the 17 features",text:"The collector computes summaries from copied tensors. Five features use the gold token during calculation. At the gold-token position, all features also depend on gold input."}
+];
+const WORDS = [
+  ["Layer","One transformer block. The model has 28 layers."],
+  ["Token","A small part of the text. The model reads tokens."],
+  ["Hidden state","The internal numbers for one token at one layer."],
+  ["Key","A learned pattern in the MLP. The MLP compares the data with the key."],
+  ["Up-projection value","An input-dependent component multiplied by a SiLU gate."],
+  ["Gate","The changed match of a key. The gate controls the value."],
+  ["MLP write","The data that the MLP adds to the hidden state."],
+  ["Norm","The size of a vector."],
+  ["Entropy","A number for the spread. A small number means that one item is strong."],
+  ["Positive fraction","Fraction of gate pre-activations above zero, not exact gate sparsity."],
+  ["Alignment","How much two directions agree. The value is between -1 and 1."],
+  ["Margin","The score of the correct answer minus the best other score."],
+  ["Probe","A small classifier. It reads a signal and predicts a result."],
+  ["AUROC","A measure of a predictor. 0.5 is chance. 1.0 is perfect."],
+  ["Correct answer","The gold answer from PopQA."]
+];
+
+function q(sel){return document.querySelector(sel);}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function fmt(v){const a=Math.abs(v);if(a>=100)return v.toFixed(0);if(a>=10)return v.toFixed(1);if(a>=1)return v.toFixed(2);if(a>=0.01)return v.toFixed(3);if(a===0)return "0";return v.toExponential(2);}
+function seriesFor(which,pos){return pos==="ans"?(which==="h"?D.series.hidden_ans:D.series.mlp_ans):(which==="h"?D.series.hidden_last:D.series.mlp_last);}
+function statVal(example,pos,stat,layer){return D.example_stats[example].stats[pos][stat][layer];}
+function statPair(stat){return [statVal("correct",state.pos,stat,state.layer),statVal("wrong",state.pos,stat,state.layer)];}
+function exampleMeta(){return D.example_meta[state.example];}
+
+/* ---------- URL parameters ---------- */
+(function(){
+  const p=new URLSearchParams(location.search);
+  if(p.has("layer"))state.layer=clamp(parseInt(p.get("layer"))||0,0,27);
+  if(p.has("pos")&&["ans","last"].includes(p.get("pos")))state.pos=p.get("pos");
+  if(p.has("example")&&["correct","wrong"].includes(p.get("example")))state.example=p.get("example");
+  if(p.has("step"))state.step=clamp(parseInt(p.get("step"))||0,0,4);
+})();
+
+/* ---------- controls ---------- */
+const slider=q("#layer");
+slider.value=state.layer;
+slider.addEventListener("input",()=>{state.layer=parseInt(slider.value);refresh();});
+q("#pos-ans").onclick=()=>{state.pos="ans";refresh();};
+q("#pos-last").onclick=()=>{state.pos="last";refresh();};
+q("#ex-correct").onclick=()=>{state.example="correct";refresh();};
+q("#ex-wrong").onclick=()=>{state.example="wrong";refresh();};
+
+/* ---------- section 1 ---------- */
+function renderLayerList(){
+  const host=q("#layer-list");
+  host.innerHTML="";
+  for(const l of D.series.layers){
+    const h=seriesFor("h",state.pos)[l], m=seriesFor("m",state.pos)[l];
+    const b=document.createElement("button");
+    b.className="layerrow"+(l===state.layer?" selected":"");
+    b.innerHTML=`<span class="lnum">${l}</span>
+      <span class="minibars">
+        <span class="mini"><i style="width:${barW(h)}%;background:${COL.hidden}"></i></span>
+        <span class="mini"><i style="width:${barW(m)}%;background:${COL.mlp}"></i></span>
+      </span>`;
+    b.onclick=()=>{state.layer=l;slider.value=l;refresh();};
+    host.appendChild(b);
+  }
+}
+function barW(v){return clamp((v-0.45)/0.50*100,2,100);}
+
+function renderLayerChart(){
+  const W=660,H=310,ml=52,mr=14,mt=18,mb=38;
+  const X=l=>ml+l*(W-ml-mr)/(D.series.layers.length-1);
+  const Y=v=>mt+(0.95-v)/(0.95-0.45)*(H-mt-mb);
+  let s=`<svg viewBox="0 0 ${W} ${H}">`;
+  for(let g=0.5;g<=0.951;g+=0.1){
+    s+=`<line x1="${ml}" x2="${W-mr}" y1="${Y(g)}" y2="${Y(g)}" stroke="#e7ebef"/>`;
+    s+=`<text x="${ml-8}" y="${Y(g)+4}" font-size="11" fill="#5b6570" text-anchor="end">${g.toFixed(1)}</text>`;
+  }
+  for(const l of [0,4,8,12,16,20,24,27]){
+    s+=`<text x="${X(l)}" y="${H-14}" font-size="11" fill="#5b6570" text-anchor="middle">${l}</text>`;
+  }
+  s+=`<text x="${(W+ml)/2}" y="${H-1}" font-size="11" fill="#5b6570" text-anchor="middle">layer</text>`;
+  s+=`<text x="14" y="${(H-mb+mt)/2}" font-size="11" fill="#5b6570" text-anchor="middle" transform="rotate(-90 14 ${(H-mb+mt)/2})">AUROC</text>`;
+  const lines=[["h",COL.hidden],["m",COL.mlp]];
+  for(const [w,c] of lines){
+    const vals=seriesFor(w,state.pos);
+    const pts=vals.map((v,i)=>`${X(i)},${Y(v)}`).join(" ");
+    s+=`<polyline points="${pts}" fill="none" stroke="${c}" stroke-width="2.4"/>`;
+    for(let i=0;i<vals.length;i+=1){s+=`<circle cx="${X(i)}" cy="${Y(vals[i])}" r="2.2" fill="${c}"/>`;}
+  }
+  const xl=X(state.layer);
+  s+=`<line x1="${xl}" x2="${xl}" y1="${mt}" y2="${H-mb}" stroke="#1b1b1b" stroke-dasharray="4 3"/>`;
+  s+=`<circle cx="${xl}" cy="${Y(seriesFor("h",state.pos)[state.layer])}" r="5" fill="${COL.hidden}" stroke="#fff" stroke-width="1.5"/>`;
+  s+=`<circle cx="${xl}" cy="${Y(seriesFor("m",state.pos)[state.layer])}" r="5" fill="${COL.mlp}" stroke="#fff" stroke-width="1.5"/>`;
+  s+=`</svg>`;
+  q("#layer-chart").innerHTML=s;
+}
+
+function renderLayerText(){
+  const h=seriesFor("h",state.pos)[state.layer], m=seriesFor("m",state.pos)[state.layer];
+  const bestH=seriesFor("h",state.pos).indexOf(Math.max(...seriesFor("h",state.pos)));
+  const posName=state.pos==="ans"?"the supplied gold-token position":"the last prompt token";
+  q("#layer-text").innerHTML=`Layer <b>${state.layer}</b> at ${posName}: hidden state AUROC <b>${h.toFixed(3)}</b>, MLP features AUROC <b>${m.toFixed(3)}</b>. `+
+    `The hidden state is best at layer <b>${bestH}</b> (AUROC ${Math.max(...seriesFor("h",state.pos)).toFixed(3)}).`;
+}
+
+/* ---------- section 2 ---------- */
+function renderStepButtons(){
+  const host=q("#step-buttons");
+  host.innerHTML="";
+  STEPS.forEach((st,i)=>{
+    const b=document.createElement("button");
+    b.className="small"+(i===state.step?" active":"");
+    b.textContent=st.name;
+    b.onclick=()=>{state.step=i;renderStep();};
+    host.appendChild(b);
+  });
+}
+function renderPipe(){
+  q("#pipe").innerHTML=STEPS.map((st,i)=>
+    `<div class="pbox${i===state.step?" active":""}"><div class="pnum">step ${i+1}</div>${st.name.replace(/^\d+\.\s*/,"")}</div>`
+  ).join("");
+}
+function renderExampleNote(){
+  const m=exampleMeta();
+  const verdict=`The matcher accepts ${Math.round(m.frac*30)} of 30 samples.`;
+  q("#example-note").innerHTML=`<b>Example:</b> &ldquo;${m.question}&rdquo; <b>Gold answer:</b> ${m.gold}. ${verdict} <b>Stated confidence:</b> ${m.confidence}.`;
+}
+function silu(x){return x/(1+Math.exp(-x));}
+function barsSVG(values,labels,color,W=620,H=230,maxV=null){
+  const ml=44,mr=10,mt=14,mb=30;
+  const mx=maxV===null?Math.max(...values,1e-9):maxV;
+  const bw=(W-ml-mr)/values.length;
+  let s=`<svg viewBox="0 0 ${W} ${H}">`;
+  for(let g=0;g<=4;g++){
+    const y=mt+(H-mt-mb)*g/4;
+    s+=`<line x1="${ml}" x2="${W-mr}" y1="${y}" y2="${y}" stroke="#e7ebef"/>`;
+    s+=`<text x="${ml-6}" y="${y+4}" font-size="10" fill="#5b6570" text-anchor="end">${(mx*(1-g/4)).toFixed(2)}</text>`;
+  }
+  values.forEach((v,i)=>{
+    const x=ml+i*bw+bw*0.15, hgt=(v/mx)*(H-mt-mb)*0.92, y=H-mb-hgt;
+    s+=`<rect x="${x}" y="${y}" width="${bw*0.7}" height="${hgt}" rx="2" fill="${color}"/>`;
+    if(labels)s+=`<text x="${x+bw*0.35}" y="${H-mb+14}" font-size="10" fill="#5b6570" text-anchor="middle">${labels[i]}</text>`;
+  });
+  s+=`</svg>`;
+  return s;
+}
+function groupedBarsSVG(before,after,W=620,H=240){
+  const ml=44,mr=10,mt=14,mb=30;
+  const mx=Math.max(...before,...after,1e-9);
+  const group=(W-ml-mr)/before.length;
+  let s=`<svg viewBox="0 0 ${W} ${H}">`;
+  for(let g=0;g<=4;g++){
+    const y=mt+(H-mt-mb)*g/4;
+    s+=`<line x1="${ml}" x2="${W-mr}" y1="${y}" y2="${y}" stroke="#e7ebef"/>`;
+    s+=`<text x="${ml-6}" y="${y+4}" font-size="10" fill="#5b6570" text-anchor="end">${(mx*(1-g/4)).toFixed(2)}</text>`;
+  }
+  before.forEach((v,i)=>{
+    const x0=ml+i*group;
+    const h1=(Math.max(v,0)/mx)*(H-mt-mb)*0.92;
+    const h2=(Math.max(after[i],0)/mx)*(H-mt-mb)*0.92;
+    s+=`<rect x="${x0+group*0.10}" y="${H-mb-h1}" width="${group*0.35}" height="${h1}" rx="2" fill="#b9c7dc"/>`;
+    s+=`<rect x="${x0+group*0.50}" y="${H-mb-h2}" width="${group*0.35}" height="${h2}" rx="2" fill="${COL.mlp}"/>`;
+    s+=`<text x="${x0+group*0.475}" y="${H-mb+14}" font-size="10" fill="#5b6570" text-anchor="middle">key ${i+1}</text>`;
+  });
+  s+=`</svg>`;
+  return s;
+}
+function renderStep(){
+  renderStepButtons();renderPipe();renderExampleNote();
+  const ex=state.example, l=state.layer;
+  const top=D.gate[ex][state.pos].top[l];
+  let html="", text=STEPS[state.step].text;
+  if(state.step===0){
+    html=barsSVG(top.slice(0,20),null,COL.mlp);
+    html+=`<p class="note">The 20 largest signed pre-activations at the selected position. Maximum: <b>${top[0].toFixed(2)}</b>.</p>`;
+  }else if(state.step===1){
+    const eight=top.slice(0,8);
+    html=groupedBarsSVG(eight,eight.map(silu));
+    html+=`<p class="note">Grey: pre-activation. Orange: SiLU value. Only the eight largest signed pre-activations are shown.</p>`;
+  }else if(state.step===2){
+    html=twoValueCard("Selection-vector norm (l2_sel)","SiLU gates multiply up-projection values elementwise. The norm measures this vector. The down projection follows.");
+  }else if(state.step===3){
+    html=twoValueCard("MLP write at layer "+l, null, ["l2_down","down_norm_ratio","cos_down_h"]);
+  }else{
+    const counts=[["The gates",7],["The MLP write",5],["Alignment and competition",5]];
+    html=`<div class="rawgrid">`+counts.map(([n,c])=>
+      `<div class="rawbox"><b>${n}:</b> ${c} numbers<div class="note">See Section 3 for the cards.</div></div>`).join("")+`</div>`;
+  }
+  q("#step-data").innerHTML=html;
+  q("#step-text").innerHTML="<b>"+STEPS[state.step].name.replace(/^\d+\.\s*/,"")+".</b> "+text;
+}
+function twoValueCard(title,intro,stats=["l2_sel"]){
+  let s=`<h3 style="margin-top:0">${title}</h3>`;
+  if(intro)s+=`<p class="note">${intro}</p>`;
+  for(const st of stats){
+    const [c,w]=statPair(st);
+    const mx=Math.max(Math.abs(c),Math.abs(w),1e-9);
+    s+=`<div style="margin:10px 0 4px"><b>${STAT_TEXT[st][0]}</b> <span class="note">${STAT_TEXT[st][1]}</span></div>`;
+    s+=rowHTML("Correct example",c,mx,"ok")+rowHTML("Wrong example",w,mx,"bad");
+  }
+  return s;
+}
+function rowHTML(tag,v,mx,cls){
+  const w=clamp(Math.abs(v)/mx*100,1,100);
+  return `<div class="valrow"><span class="tag">${tag}</span><div class="bar center"><div class="fill ${cls}" style="left:${v<0?50-w/2:50}%;width:${w/2}%"></div></div><span class="num">${fmt(v)}</span></div>`;
+}
+
+/* ---------- section 3 ---------- */
+function renderStats(){
+  let host=q("#stats-groups");
+  let html="";
+  for(const g of GROUPS){
+    html+=`<div class="statgroup"><h3>${g.name}<span class="gdesc">${g.desc}</span></h3><div class="stats-grid">`;
+    for(const st of g.stats){
+      const [c,w]=statPair(st);
+      const mx=Math.max(Math.abs(c),Math.abs(w),1e-9);
+      html+=`<div class="stat"><div class="sname">${STAT_TEXT[st][0]}</div>
+        <div class="sdesc">${STAT_TEXT[st][1]}</div>
+        <div class="vals">
+          ${rowHTML("Correct",c,mx,"ok")}
+          ${rowHTML("Wrong",w,mx,"bad")}
+        </div></div>`;
+    }
+    html+=`</div></div>`;
+  }
+  host.innerHTML=html;
+}
+
+/* ---------- section 4 ---------- */
+function renderRaw(){
+  q("#dots-raw").innerHTML=Array.from({length:300},()=>"<span></span>").join("");
+  q("#dots-few").innerHTML=Array.from({length:17},()=>"<span></span>").join("");
+  q("#raw-badges").innerHTML=D.raw_layers.map(l=>`<span class="badge">raw probe: layer <b>${l}</b></span>`).join("");
+  q("#raw-a").textContent=D.headline.raw.toFixed(3);
+  q("#hid-a").textContent=D.headline.hidden.toFixed(3);
+  q("#mlp-a").textContent=D.headline.mlp.toFixed(3);
+  q("#comb-a").textContent="AUROC "+D.headline.combined.toFixed(3);
+}
+
+/* ---------- words ---------- */
+function renderWords(){
+  q("#word-list").innerHTML=WORDS.map(([w,d])=>`<div class="word"><b>${w}</b><div>${d}</div></div>`).join("");
+}
+
+/* ---------- refresh ---------- */
+function refresh(){
+  q("#layer-label").textContent=state.layer;
+  slider.value=state.layer;
+  q("#pos-ans").classList.toggle("active",state.pos==="ans");
+  q("#pos-last").classList.toggle("active",state.pos==="last");
+  q("#ex-correct").classList.toggle("active",state.example==="correct");
+  q("#ex-wrong").classList.toggle("active",state.example==="wrong");
+  renderLayerList();renderLayerChart();renderLayerText();
+  renderStep();renderStats();
+}
+renderWords();renderRaw();refresh();
+</script>
+</body>
+</html>

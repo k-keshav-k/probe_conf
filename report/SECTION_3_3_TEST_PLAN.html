@@ -1,0 +1,625 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>A decisive test of MLP features for confidence</title><style>body{font:17px/1.6 system-ui,sans-serif;max-width:1000px;padding:36px;margin:auto;color:#172c3e}h1,h2,h3{line-height:1.25}h2{margin-top:2em;border-bottom:1px solid #ddd;padding-bottom:.4em}table{border-collapse:collapse;width:100%;font-size:.9em}th,td{padding:10px;border-bottom:1px solid #ddd;text-align:left;vertical-align:top}th{background:#edf3f7}pre{overflow:auto;background:#f4f6f8;padding:16px;font-size:.85em}code{font-size:.9em}a{color:#1d5a90}@media print{body{font-size:10pt;padding:0}h2,h3{break-after:avoid}tr{break-inside:avoid}}</style><body><h1 id="a-decisive-test-of-mlp-features-for-confidence">A decisive test of MLP features for confidence</h1>
+<p><strong>Scope:</strong> <code>meet.md</code>, section 3.3, and the corresponding proposal in <code>meet.original.txt</code>.
+<strong>Status:</strong> proposed experiment; no new model runs or confirmatory results.
+<strong>Prepared:</strong> 7 October 2026.</p>
+<h2 id="1-the-decision-this-experiment-must-resolve">1. The decision this experiment must resolve</h2>
+<p>The proposal contains several claims. A single AUROC comparison cannot resolve all of them.</p>
+<ol>
+<li>MLP interaction features contain useful information about answer correctness.</li>
+<li>That information improves a confidence estimator beyond strong hidden-state and probability baselines.</li>
+<li>The improvement remains after question difficulty is controlled.</li>
+<li>Concentrated MLP interactions indicate reliable recall; competing interactions indicate uncertainty.</li>
+<li>The resulting probabilities are useful confidence estimates, rather than only useful rankings.</li>
+</ol>
+<p><strong>Recommended primary question:</strong> On unseen subjects, does adding reference-free MLP features improve a strong confidence estimator by a practically useful amount?</p>
+<p><strong>Recommended primary setting:</strong> Predict whether the model's next greedy answer will be correct, before it produces that answer. This gives a direct continuation of the pilot without reference-answer inputs.</p>
+<p><strong>Required second setting:</strong> Estimate correctness after the model produces a candidate answer. Several sampled answers to the same question permit a stronger control for question difficulty. Conclusions from this setting must remain answer-specific; they cannot be presented as pre-answer results.</p>
+<p>A definitive answer must have a stated scope. This plan can establish a useful gain, rule out a gain of a specified size, or identify insufficient evidence for the tested models and data. No finite test can establish independence from every possible difficulty factor or reject every possible MLP architecture.</p>
+<h3 id="correct-the-meaning-of-difficulty-independence">Correct the meaning of difficulty independence</h3>
+<p>The target should be <strong>information beyond difficulty</strong>, not a confidence score uncorrelated with difficulty. If difficult questions have lower success rates, a calibrated estimator should usually give them lower confidence.</p>
+<p>For a score calibrated within difficulty groups, <code>E[p | D] = E[Y | D]</code>. If success rates vary with difficulty <code>D</code>, the mean calibrated score must vary too. A requirement that <code>p</code> be independent of <code>D</code> would conflict with this condition. This is a mathematical design constraint, not an experimental finding.</p>
+<p>Therefore, do not require an adversary to remove every difficulty signal. Test conditional predictive value, robustness across difficulty groups, and discrimination between correct and incorrect answers to the <strong>same question</strong>.</p>
+<h2 id="2-what-the-current-pilot-does-and-does-not-establish">2. What the current pilot does and does not establish</h2>
+<p>The saved main-target scores are 0.871 for hidden states and 0.907 for hidden states plus MLP summaries. The observed difference is +0.037, with a paired interval of [+0.023, +0.051]. MLP summaries alone reach 0.863; their difference from hidden states is inconclusive.</p>
+<p>These are exploratory results. The strongest features use reference-answer information. The selected layers use the same evaluation data. There is no untouched final test set. The confidence target is a threshold on repeated sampled success, not one answer's correctness. Calibration and the proposed dominant-interaction mechanism remain untested.</p>
+<p>Use the historical data for implementation checks, feature development, and conservative variance estimates. Do not reuse its reported improvement as an unbiased power estimate. Do not relabel a new split of those questions as a final test.</p>
+<p>Sources: <code>report/AUDIT.md</code>, <code>report/REPORT.md</code>, <code>results/pilot7b_frac_extra.csv</code>, and <code>results/audit_checks.json</code>.</p>
+<h2 id="3-define-the-actual-mlp-computation-before-selecting-features">3. Define the actual MLP computation before selecting features</h2>
+<h3 id="31-separate-the-meetings-description-from-the-implemented-mechanism">3.1 Separate the meeting's description from the implemented mechanism</h3>
+<p>For the installed Qwen2 implementation, let <code>x</code> be the normalized input to the MLP:</p>
+<pre><code class="language-text">a = W_gate x
+b = W_up x
+s = SiLU(a) * b           # elementwise product
+o = W_down s
+v_j = column j of W_down
+c_j = s_j v_j             # contribution of channel j to the MLP output
+o = sum_j c_j
+</code></pre>
+<p>The installed module uses no bias in these three projections. Verify this contract separately for each replication model. Save both the module input and its corresponding residual-stream input; normalization changes the comparison.</p>
+<p><strong>Important correction:</strong> <code>x dot v_j</code> is a computable similarity, but it is not the coefficient used to select channel <code>j</code> in this gated MLP. The actual coefficient is <code>s_j</code>. The meeting's literal query-to-W2 proposal and the actual gated computation must have separate feature names and separate results.</p>
+<p>The key-value interpretation and ROME motivate this experiment; neither establishes that a dominant W2 similarity is calibrated confidence in Qwen. See <a href="https://aclanthology.org/2021.emnlp-main.446/">Geva et al., key-value memories</a> and <a href="https://rome.baulab.info/">Meng et al., ROME</a>.</p>
+<h3 id="32-freeze-four-mlp-feature-families">3.2 Freeze four MLP feature families</h3>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th>Definition</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Literal W2 similarities</td>
+<td>Raw <code>x dot v_j</code>, plus cosine similarities with explicit norm controls</td>
+<td>Test the wording of section 3.3 directly</td>
+</tr>
+<tr>
+<td>Gate and selection features</td>
+<td><code>a</code>, <code>SiLU(a)</code>, <code>s</code>, and their distribution summaries</td>
+<td>Test the actual routing computation</td>
+</tr>
+<tr>
+<td>Contribution concentration</td>
+<td>Distribution of <code>e_j = abs(s_j) * norm(v_j)</code></td>
+<td>Test whether a few output contributions dominate</td>
+</tr>
+<tr>
+<td>Output and direction features</td>
+<td><code>norm(o)</code>, <code>norm(o)/norm(x)</code>, <code>cos(o,x)</code>, and cancellation measures</td>
+<td>Separate concentration from size and direction</td>
+</tr>
+</tbody>
+</table>
+<p>For each nonnegative mass vector, set <code>p_j = e_j / sum(e)</code>. If total mass is zero, set a missing/zero-mass indicator and use a documented fixed value for each statistic.</p>
+<p>Freeze these concentration summaries: normalized entropy <code>-sum(p log p)/log(m)</code>, top-1 mass, top-5 mass, top-1 minus top-2 mass, and effective channel count <code>1/sum(p^2)</code>. Here <code>m</code> is the number of channels. For signed dot products, summarize positive and negative parts separately, and retain a signed total. Do not silently convert signed evidence into a probability.</p>
+<p>Use contribution magnitude as the main concentration definition. Raw selection magnitudes alone depend on channel scaling. Under the transformation <code>W_up[j,:] *= k</code> and <code>W_down[:,j] /= k</code>, for positive <code>k</code>, the function and each <code>c_j</code> stay unchanged. Raw <code>s_j</code> concentration can change. Verify this invariance numerically before using concentration as a mechanism explanation.</p>
+<p>Keep the pilot's 12 reference-free summaries as a replication family. Remove all five reference-dependent summaries from every confirmatory feature set. Preserve their old names only in the historical results.</p>
+<h3 id="33-feature-positions-and-information-boundaries">3.3 Feature positions and information boundaries</h3>
+<ul>
+<li><strong>Before-answer track:</strong> last prompt token only. No generated token, reference token, answer alias, object popularity, or correctness label can enter the feature extractor.</li>
+<li><strong>After-answer track:</strong> last content token of the model's own candidate answer, before a confidence request. The reference answer is still unavailable. Hidden and MLP features use the same position.</li>
+<li><strong>Secondary positions:</strong> last subject token and mean over generated content tokens. Select these only in development; do not choose a position after viewing test results.</li>
+<li>Record pre-block hidden state, normalized MLP input, and post-block hidden state. Compare each with corresponding MLP features at the same layer and position.</li>
+<li>Candidate-token alignment is a separate secondary family. It may use the model's own tokens or its own top-k next-token candidates, never the reference token. Raw projections are diagnostic values, not exact final-logit contributions.</li>
+</ul>
+<p>MLP features are deterministic functions of internal states and fixed weights. Thus, the claim concerns accessibility to a specified probe class and data budget. It cannot mean that MLP features add information unavailable to an unrestricted function of those same internal states.</p>
+<h2 id="4-data-that-can-support-a-new-answer">4. Data that can support a new answer</h2>
+<h3 id="41-inventory-checked-in-this-workspace">4.1 Inventory checked in this workspace</h3>
+<p>The local cached PopQA snapshot contains 14,267 questions and 12,244 subject IDs. The original four-relation subset contains 1,873 questions and 1,799 subjects. The union of subjects in saved label files contains 1,066 IDs.</p>
+<p>After excluding those subjects, the original domain has only <strong>733 questions from 733 unseen subjects</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Relation</th>
+<th style="text-align: right;">All available questions</th>
+<th style="text-align: right;">Questions on unseen subjects</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Father</td>
+<td style="text-align: right;">570</td>
+<td style="text-align: right;">237</td>
+</tr>
+<tr>
+<td>Mother</td>
+<td style="text-align: right;">187</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>Place of birth</td>
+<td style="text-align: right;">584</td>
+<td style="text-align: right;">276</td>
+</tr>
+<tr>
+<td>Occupation</td>
+<td style="text-align: right;">532</td>
+<td style="text-align: right;">220</td>
+</tr>
+</tbody>
+</table>
+<p>These counts came from the cached Arrow data and all <code>results/*labels.csv</code> files. The snapshot is saved in <code>report/SECTION_3_3_DATA_INVENTORY.json</code>. Before freezing the split, inspect other logs and exported data for additional exposure. The zero remaining mother questions means a fresh four-relation test cannot come from this pool alone.</p>
+<p>Reserve the 733 questions as a separate legacy-domain check. They are not a substitute for a powered test and cannot support a fresh mother-relation result. Do not fill the gap with different relations while retaining the original population claim.</p>
+<h3 id="42-construct-a-fresh-person-question-cohort">4.2 Construct a fresh person-question cohort</h3>
+<p>Start with <strong>6,000 new subjects</strong>, one primary question per subject. Exclude every subject in the cached PopQA snapshot and all previously used subjects. This conservative rule also keeps the 733-question check separate.</p>
+<p>Use equal relation quotas and equal popularity-quintile quotas within relation. The target is the resulting balanced research population, not the distribution of all real user questions. Fix the popularity measurement window before collection. Give missing page-view metadata an explicit stratum.</p>
+<p>Use a dated Wikidata snapshot and documented statement sources for <a href="https://www.wikidata.org/wiki/Property:P22">father, P22</a>, <a href="https://www.wikidata.org/wiki/Property:P25">mother, P25</a>, <a href="https://www.wikidata.org/wiki/Property:P19">place of birth, P19</a>, and <a href="https://www.wikidata.org/wiki/Property:P106">occupation, P106</a>. Verify that the new pool can meet the quotas before committing to the sample size.</p>
+<p>Exclude ambiguous subject names without a fixed disambiguation rule, unresolved conflicting facts, and questions whose wording has no stable answer. Accept documented multiple occupations; freeze the semantic granularity policy. Exclude mythical or disputed subjects from the main cohort and identify this scope difference from the pilot. Do not remove questions because a model gets them wrong.</p>
+<p>A new data snapshot does not imply a fact is new to model pretraining. Record provenance and relevant dates. Report likely recent or changed facts separately. The study tests held-out evaluation subjects, not absence from pretraining.</p>
+<h3 id="43-assign-disjoint-splits-before-model-collection">4.3 Assign disjoint splits before model collection</h3>
+<table>
+<thead>
+<tr>
+<th>Split</th>
+<th style="text-align: right;">Initial subjects</th>
+<th>Permitted use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Training</td>
+<td style="text-align: right;">2,000</td>
+<td>Fit probes and difficulty models</td>
+</tr>
+<tr>
+<td>Development</td>
+<td style="text-align: right;">800</td>
+<td>Select features, layers, hyperparameters, power assumptions, and frozen decision rules</td>
+</tr>
+<tr>
+<td>Calibration</td>
+<td style="text-align: right;">800</td>
+<td>Fit probability calibration and choose abstention thresholds after probe selection</td>
+</tr>
+<tr>
+<td>Final test</td>
+<td style="text-align: right;">2,400</td>
+<td>One final evaluation of frozen methods</td>
+</tr>
+</tbody>
+</table>
+<p>Increase the final-test allocation, if the power analysis requires it, to a cap of 6,000 subjects. This makes the maximum fresh cohort 9,600 subjects. The allocation is an initial design, not a claim that 2,400 subjects are sufficient.</p>
+<p>All answers, paraphrases, relations, and model outputs for a subject must stay in its split. Group aliases and near-duplicate facts. Record subject–answer entity overlap; run an answer-entity-disjoint sensitivity check where feasible. Shared occupation labels alone must not connect the entire data set into one group.</p>
+<p>A split manifest contains subject IDs, question IDs, source revisions, relation, popularity stratum, and a hash. Seal test labels from the analysis code until the models, calibration rules, and report specification are frozen. A filesystem hash records the freeze; it is not a substitute for disciplined access control.</p>
+<h2 id="5-models-answers-and-trustworthy-labels">5. Models, answers, and trustworthy labels</h2>
+<h3 id="51-model-scope">5.1 Model scope</h3>
+<p>Use <a href="https://huggingface.co/Qwen/Qwen2.5-7B-Instruct">Qwen2.5-7B-Instruct</a> for the primary test. Use <a href="https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3">Mistral-7B-Instruct-v0.3</a> as a required replication on another model family. Pin weight revisions, tokenizers, chat templates, software versions, numerical precision, and generation settings.</p>
+<p>Use each model's documented chat template and the same semantic task. Adapt hook contracts per architecture. Run one model at a time on the existing machine. Quantization changes the tested model; do not introduce it only for one method. If replication cannot run, limit the conclusion to Qwen rather than selecting an easier replacement after results are known.</p>
+<p>Freeze both models' protocols before opening either final test. Allow model-specific fitting on their own training/development outputs under the same search rules. Map the fixed layer set by relative depth. Keep demonstration subjects out of every evaluation split. Freeze any model-specific prompt adaptations before test collection.</p>
+<h3 id="52-two-distinct-outcomes">5.2 Two distinct outcomes</h3>
+<p><strong>Track A, before-answer:</strong> one greedy answer per question. The label is whether that entire answer is correct. Use the last prompt position to predict this label. Fix the short-answer prompt, examples, stop condition, and a 32-token content limit. Preserve refusals, empty answers, and truncations as recorded outcomes.</p>
+<p><strong>Track B, after-answer:</strong> eight independent sampled answers per question, with temperature 1.0 and top-p 1.0. The label is correctness of each candidate. Extract features by replaying the exact prompt plus the model's generated tokens. No new answer may replace the original during feature collection.</p>
+<p>Weight questions equally, then weight their eight samples equally. Cache duplicate candidate strings or token sequences for efficiency, but retain their sampling multiplicities in the estimand. Eight answers from one subject are not eight independent subjects.</p>
+<p>The mean of eight labels is a noisy estimate of sampled success. Do not threshold it at 0.5 and present it as precise knowledge. If a fraction-correct analysis is wanted, collect a separate fixed 30-sample replication subset and use binomial counts directly. It is secondary and cannot rescue a failed primary test.</p>
+<h3 id="53-confidence-requests">5.3 Confidence requests</h3>
+<p>For Track A, ask for the probability that the model's next greedy short answer to the same question will be correct. Use identical factual context and examples in the answer and confidence branches. Extract probe features from the answer branch, before any confidence instruction.</p>
+<p>For Track B, show the exact candidate answer and ask for its probability of being correct. Use the same factual context. Collect confidence in a separate branch after recording answer features.</p>
+<p>Save raw confidence text. Use a strict parser accepting only the requested numerical format in [0,100]. Mark failures as missing. A train-fitted median plus a missingness indicator is the operational baseline; also report valid-only results on a common subset. Never encode a parse failure as genuine zero confidence.</p>
+<h3 id="54-label-policy">5.4 Label policy</h3>
+<p>Use normalized exact entity/alias matches and token boundaries. Do not accept an alias merely because it appears inside an unrelated word. Define rules for multiple answers, contradictory additions, birth-place granularity, and occupation synonyms before annotation.</p>
+<p>For the final test, two reviewers independently check each unique question–candidate answer and resolve disagreements without seeing probe scores. Review reference facts as well as model text. Review calibration labels with the same policy. Development may use automatic matches with manual review of unresolved cases, followed by a stratified audit of accepted and rejected matches.</p>
+<p>Report agreement, adjudication rate, matcher precision/recall against adjudicated labels, and label changes. A model-based judge can triage cases but cannot be the sole final authority. Label correction must apply across all methods, including inconvenient failures.</p>
+<h2 id="6-baselines-and-comparisons-that-isolate-mlp-value">6. Baselines and comparisons that isolate MLP value</h2>
+<h3 id="61-required-feature-sets">6.1 Required feature sets</h3>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Inputs</th>
+<th>What it controls</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>D</td>
+<td>Question-only metadata: relation, subject popularity, prompt/name length, language count, collision count, missingness</td>
+<td>Observable difficulty</td>
+</tr>
+<tr>
+<td>V</td>
+<td>Stated confidence, raw and recalibrated</td>
+<td>Prompted self-assessment</td>
+</tr>
+<tr>
+<td>P</td>
+<td>Reference-free token probability features</td>
+<td>Output uncertainty</td>
+</tr>
+<tr>
+<td>H</td>
+<td>Hidden states at matched positions; layer input and output variants</td>
+<td>Standard internal probe</td>
+</tr>
+<tr>
+<td>M</td>
+<td>Each frozen MLP family, alone</td>
+<td>Replacement claim</td>
+</tr>
+<tr>
+<td>H+M</td>
+<td>The same hidden features plus MLP features</td>
+<td>Direct extension of the pilot</td>
+</tr>
+<tr>
+<td>B</td>
+<td>D+P+H, selected with development data</td>
+<td>Strong practical comparator</td>
+</tr>
+<tr>
+<td>B+M</td>
+<td>Identical B inputs plus MLP features</td>
+<td>Main confirmatory comparison</td>
+</tr>
+</tbody>
+</table>
+<p>Before-answer P uses top-1 probability, top-1/top-2 margin, entropy, and fixed top-k mass. After-answer P additionally uses sequence log probability, mean/minimum token log probability, token entropy summaries, and answer length. No feature uses the reference probability, reference rank, object popularity, or reference alias count.</p>
+<p>Allow D a nonlinear baseline, such as gradient-boosted trees, so a weak surface model does not create an artificial residual signal. Fix its tuning budget alongside the probe budget. Inspect the actual implemented inputs; proposed metadata absent from the pilot must be collected before use.</p>
+<h3 id="62-fair-capacity-and-layer-controls">6.2 Fair capacity and layer controls</h3>
+<p>Use standardized L2 logistic regression as the main readout. Give H and H+M, and B and B+M, the same development search budget. Add one small nonlinear readout as a required robustness control, using the same parameter budget and training schedule on both sides.</p>
+<p>Freeze a 512-dimensional internal-feature budget for the matched-capacity comparison:</p>
+<ul>
+<li>H control: 512 dimensions from hidden states across the same layers.</li>
+<li>H+M: 256 hidden dimensions plus 256 MLP dimensions.</li>
+<li>Use training-fitted PCA for high-dimensional vectors. Standardize blocks on training data.</li>
+<li>Also report the additive comparison retaining all 512 hidden dimensions plus 256 MLP dimensions.</li>
+<li>Compare that additive model with a 768-dimensional hidden-only control and with a hidden-plus-nonlinear-hidden-summary control.</li>
+<li>Keep D and P identical outside this internal-feature budget.</li>
+</ul>
+<p>A fixed dimension budget can discard useful hidden information. Therefore, report both matched-budget and additive comparisons. Do not call a PCA bottleneck failure proof that raw MLP features have no signal.</p>
+<p>For layer selection, start with all-layer summaries and a fixed evenly spaced layer set. Select a single-layer variant on development only. A combined multi-layer MLP model must face a multi-layer hidden baseline, not only the pilot's selected single hidden layer.</p>
+<p>Fit scalers, PCA, imputation, feature selection, and classifiers inside every training fold. No inner-validation record may fit its own preprocessing. Use subject-grouped folds. Save the exact fitted pipeline and feature order.</p>
+<p>Use three grouped inner folds and select configurations by mean Brier score, with AUROC as a fixed tie-breaker. The initial logistic regularization grid is C = {0.001, 0.01, 0.1, 1, 10}. Allow at most 24 prespecified configurations for B and 24 for B+M in each track; divide the augmented budget across feature families before selection. Count feature/layer alternatives in that budget. The robustness neural readout has one hidden layer, learning rates {0.0001, 0.001}, weight decay {0.0001, 0.001}, at most 100 epochs, and patience 10 on inner-validation Brier score. Match its trainable parameter budget across comparisons. Freeze the configuration list after the smoke test, before final evaluation.</p>
+<h3 id="63-calibration-and-budget-fairness">6.3 Calibration and budget fairness</h3>
+<p>After method selection, fit a calibration map on the calibration split only. Compare identity, logistic/Platt scaling, and isotonic calibration through internal grouped cross-validation on that split. Refit the chosen map on the full calibration split. Apply the same selection process to each baseline and augmented model. Report before- and after-calibration scores.</p>
+<p>Calibration is the relation between forecast probabilities and success frequencies; simple held-out recalibration is a relevant baseline. See <a href="https://proceedings.mlr.press/v70/guo17a.html">Guo et al., calibration</a>. This source motivates calibration checks; it does not establish that any chosen method will work here.</p>
+<p>Use fixed probe seeds 0–4 for stochastic models. The primary prediction is the mean of the five fitted predictions, with identical treatment of controls; report each seed as sensitivity evidence. Logistic fits may be deterministic. Never select the best seed on test data.</p>
+<h2 id="7-difficulty-control-that-can-distinguish-the-hypotheses">7. Difficulty control that can distinguish the hypotheses</h2>
+<h3 id="71-conditional-prediction-beyond-measured-difficulty">7.1 Conditional prediction beyond measured difficulty</h3>
+<p>Compare D with D+M, and B with B+M, on unseen subjects. Include relation and flexible popularity effects in D. Report performance by the training-defined popularity groups, relation, and train-fitted difficulty-score groups.</p>
+<p>Train-defined bin boundaries stay fixed on test data. Report counts and class balance. Do not draw conclusions from an AUROC for a one-class group. Report the overall balanced-population result and prespecified per-group results; do not choose a favorable subgroup afterward.</p>
+<h3 id="72-compare-different-answers-to-the-same-question">7.2 Compare different answers to the same question</h3>
+<p>For each Track B question containing both correct and incorrect sampled answers, compute the probability that a correct answer receives a higher score. Count ties as one half. Average this within-question AUROC equally across eligible questions.</p>
+<p>Compare B+M against B and V using this measure. Report the number and fraction of eligible questions. This estimate concerns mixed-outcome questions only. Also report Brier score on <strong>all</strong> sampled answers so selection of mixed questions cannot hide poor confidence on always-wrong questions.</p>
+<p>Question-only difficulty is exactly shared within each question. Candidate length, probability, and answer identity can still differ, so P and answer-length controls remain necessary. A positive result shows answer-specific information beyond fixed question properties. It does not establish pre-answer difficulty independence.</p>
+<h3 id="73-learn-under-difficulty-control">7.3 Learn under difficulty control</h3>
+<p>Use relation-by-popularity-balanced batches or weights, fixed from the sampling design. This controls representation in training but does not erase difficulty information.</p>
+<p>For a second Track B probe, use a within-question pairwise loss on correct/incorrect answer pairs. Sample questions uniformly, then pairs within a question, to prevent prolific subjects from dominating. Apply the same loss and pair set to H/B controls. Calibrate the resulting score afterward on the separate calibration split. Compare this probe with the ordinary correctness-loss probe.</p>
+<p>Do not use an unconditional difficulty adversary as the main test. Such an objective can remove information needed for accurate confidence. It may be explored later, with a separate claim and utility check.</p>
+<h3 id="74-residual-and-robustness-checks">7.4 Residual and robustness checks</h3>
+<p>For binary correctness, fit a cross-fitted difficulty predictor of binary correctness. For sampled fraction correct, fit a binomial model of the sample counts. Match the target on both sides before computing any residual.</p>
+<p>Residual correlations are secondary diagnostics. A misspecified surface model can leave difficulty in its residual. They cannot establish causal independence.</p>
+<p>Reserve a fixed subset for two manually reviewed question paraphrases. Keep all paraphrases in the subject's split. Evaluate unchanged probes and calibrators on these prompts. Also test a low-popularity transfer condition using only training/development choices. Report shifts in both accuracy and calibration.</p>
+<h2 id="8-a-direct-test-of-the-dominant-interaction-mechanism">8. A direct test of the dominant-interaction mechanism</h2>
+<p>This part is required before saying that section 3.3's proposed mechanism is supported. Predictive improvement alone is not sufficient.</p>
+<h3 id="81-observational-test">8.1 Observational test</h3>
+<p>Predefine the layer pool, positions, and concentration statistics in Section 3. Fit a concentration-only probe and a probe of norms/directions without concentration. Compare B+concentration with B+norms/directions and B+all MLP features.</p>
+<p>The directional prediction is explicit: higher top-1 mass and lower normalized entropy should accompany higher correctness after the stated controls. Test this within Track B questions and across held-out questions with difficulty controls. Analyze confident wrong answers separately.</p>
+<p>Select one primary concentration statistic and one layer-aggregation rule on development. Treat other statistics as corrected secondary tests. If only output direction helps, the practical feature claim can succeed while the dominance explanation fails.</p>
+<h3 id="82-numerical-and-identity-controls">8.2 Numerical and identity controls</h3>
+<ul>
+<li>Hook identity: without an intervention, reconstructed <code>W_down s</code> must match the module output.</li>
+<li>Positive channel rescaling: predictions and contribution-based concentration must remain unchanged within numerical tolerance.</li>
+<li>Permutation control: shuffle channel identities jointly with the corresponding weight columns. Function and identity-free summaries must remain unchanged.</li>
+<li>Wrong-question control: replace MLP features with features from another training subject in the same difficulty stratum. Refit the same probe. This is a shortcut diagnostic, not an exact conditional-independence test.</li>
+<li>Reference-swap control: changing the hidden evaluation-only reference file must not change collected features or generated answers.</li>
+</ul>
+<p>These checks can reject an implementation or a fragile statistic before expensive causal tests.</p>
+<h3 id="83-controlled-interventions">8.3 Controlled interventions</h3>
+<p>Use an additional, preregistered causal cohort disjoint from training and the predictive final test. Start with 400 subjects and increase, before viewing causal results, according to a separate paired power calculation. Use both initially correct and initially incorrect examples; retain the full cohort in the main analysis.</p>
+<p>Select layers using development only. Apply interventions at the last prompt position and regenerate the answer:</p>
+<ol>
+<li>Identity intervention: rewrite the original activation unchanged.</li>
+<li>Remove or attenuate the highest-contribution channels, with fixed top-k and attenuation settings.</li>
+<li>Remove random channels with approximately matched removed contribution mass and output perturbation norm.</li>
+<li>Flatten or sharpen the contribution mass distribution, preserving signs and channel directions. Use exponents 0.5, 1, and 2.</li>
+<li>Repeat flattening/sharpening with total MLP-output norm restored to its original value, when the norm is nonzero.</li>
+</ol>
+<p>Predeclare the matching caliper, for example 10%, on development. If matched random controls cannot be found, report that comparison as unidentifiable under this design. Do not accept larger perturbations for the top-channel intervention without disclosure.</p>
+<p>Measure changes in answer correctness, generated-answer identity, concentration, model probabilities, and the frozen probe's confidence. Reference-answer probabilities may be used <strong>only as evaluation outcomes</strong> here; they cannot choose an intervention or enter a probe.</p>
+<p>Interpretation must be narrow. Greater damage from top-channel removal supports causal participation of those contributions. It does not prove one channel stores one fact. Flattening and sharpening also change output direction; norm matching does not isolate concentration perfectly. If sharpening increases confidence without increasing success, the simple dominance-to-confidence explanation is weakened.</p>
+<p>The mechanistic conclusion requires agreement between held-out concentration tests, invariance controls, and controlled interventions. Intervention effects alone can show that computation matters without showing that its concentration estimates confidence.</p>
+<h2 id="9-metrics-and-a-frozen-statistical-analysis">9. Metrics and a frozen statistical analysis</h2>
+<h3 id="91-primary-estimands">9.1 Primary estimands</h3>
+<p>The primary comparison is calibrated B+M against calibrated B in Track A on the fresh final test. Define all improvements as positive numbers:</p>
+<pre><code class="language-text">Delta_AUC   = AUROC(B+M) - AUROC(B)
+Delta_Brier = mean((B - Y)^2) - mean((B+M - Y)^2)
+</code></pre>
+<p>Brier score is a proper probability score. It reflects both discrimination and calibration, so an improved Brier score alone must not be called proof of improved calibration.</p>
+<p>Report H+M minus H as the direct pilot replication, M minus H as the replacement test, and comparisons with V and P. The main claim must survive B, not only the weakest baseline.</p>
+<h3 id="92-required-secondary-measures">9.2 Required secondary measures</h3>
+<ul>
+<li>Log loss, with a fixed numerical clipping rule used by every method.</li>
+<li>AUROC and precision–recall AUC, with prevalence reported.</li>
+<li>Reliability plots, calibration intercept/slope, and fixed-bin calibration error.</li>
+<li>Within-question AUROC and all-answer Brier score for Track B.</li>
+<li>Risk–coverage curves: error rate among retained answers at 25%, 50%, and 75% coverage.</li>
+<li>Coverage and error at an abstention threshold fixed on calibration data for a target 10% error rate. Report the actual test error and its interval; do not claim a guarantee.</li>
+<li>Added inference latency, memory, feature-storage size, and any extra model passes.</li>
+</ul>
+<p>Choose common probability-bin edges before test evaluation. Start with ten equal-width bins; use calibration-only counts to freeze any adjacent-bin merges. Show test counts. Do not change bins to make a reliability plot look better.</p>
+<p>For a formal calibration-improvement claim, compare a prespecified, variance-corrected squared bin-calibration error in addition to Brier score. For residuals <code>r = Y - p</code> in bin b, use the weighted sum of <code>mean(r)^2 - sample_variance(r)/n_b</code>. Do not clip negative estimates before comparing methods. Sparse bins and the chosen resolution limit interpretation. Report ordinary reliability plots alongside this statistic.</p>
+<p>The displayed variance correction assumes independent, equally weighted observations. For repeated answers or design weights, replace <code>sample_variance(r)/n_b</code> with a subject-cluster, design-aware estimate of the variance of the bin mean. Freeze this estimator and its bootstrap procedure in development. Do not treat sampled answers as independent when estimating calibration error.</p>
+<h3 id="93-uncertainty-and-multiplicity">9.3 Uncertainty and multiplicity</h3>
+<p>Use 10,000 paired bootstrap samples of <strong>subjects</strong>. Keep all answers and paraphrases for a subject together and use identical draws for both methods. For the balanced target population, resample subjects within the frozen relation/popularity strata, retaining the target stratum weights. Report the bootstrap seed.</p>
+<p>These intervals describe test-population sampling with fitted models held fixed. Report training-seed sensitivity separately. A smaller prespecified outer resampling exercise can refit whole pipelines to assess training variability; do not describe the ordinary test bootstrap as including it.</p>
+<p>Use hierarchical testing. First test the primary Track A B+M versus B comparison. Its joint practical-success rule requires both endpoints, so it is an intersection requirement, not selection of whichever metric wins. Use Holm correction at familywise 0.05 for the separately claimed secondary comparisons, including Track B gains, M-only superiority, and the selected concentration test. Publish adjusted tests and conservative simultaneous intervals when using interval-based secondary decisions.</p>
+<p>Correct intervention-family comparisons separately. Subgroup plots and unselected feature variants are exploratory unless they have a separately registered family. A secondary result cannot retroactively replace a failed primary result.</p>
+<h2 id="10-sample-size-and-explicit-yesnoinconclusive-rules">10. Sample size and explicit yes/no/inconclusive rules</h2>
+<h3 id="101-practical-effect-sizes">10.1 Practical effect sizes</h3>
+<p>The following are <strong>proposed study decisions</strong>, not literature constants:</p>
+<table>
+<thead>
+<tr>
+<th>Quantity</th>
+<th style="text-align: right;">Smallest gain worth claiming</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Main AUROC gain</td>
+<td style="text-align: right;">+0.020</td>
+</tr>
+<tr>
+<td>Main Brier-score reduction</td>
+<td style="text-align: right;">+0.005 absolute</td>
+</tr>
+<tr>
+<td>Track B within-question AUROC gain</td>
+<td style="text-align: right;">+0.030</td>
+</tr>
+<tr>
+<td>Allowed increase in fixed-bin calibration error</td>
+<td style="text-align: right;">+0.010 absolute</td>
+</tr>
+</tbody>
+</table>
+<p>Freeze these margins before the final-test collection or evaluation. If operating costs justify different margins, change them while only development data are visible and document why.</p>
+<h3 id="102-power-analysis-before-locking-the-final-test">10.2 Power analysis before locking the final test</h3>
+<p>Use new development predictions without reference-answer features. Simulate paired outcomes and predictions at the <strong>subject</strong> level, preserving relation/popularity strata and within-question answer dependence. Use several plausible prevalences and training-variance scenarios. The old gold-dependent gain is not the assumed new effect.</p>
+<p>Evaluate final-test sizes of 800, 1,600, 2,400, 4,000, and 6,000 subjects. Choose the smallest feasible size that provides at least 90% simulated probability of the intended decision under both:</p>
+<ul>
+<li>A useful alternative, such as true AUROC gain +0.040 and Brier reduction +0.010.</li>
+<li>A negligible alternative, such as zero gain, for ruling out the prespecified useful margins.</li>
+</ul>
+<p>Also simulate the probability of an inconclusive result near the margins. A test cannot have 90% probability that its lower bound exceeds a margin when the true effect equals that margin.</p>
+<p>Check class counts, not just total N. Use at least 300 correct and 300 incorrect <strong>subjects</strong> in the main test as an initial planning floor, and at least 300 mixed-outcome subjects for a within-question analysis. These floors do not replace the power calculation. Plan counts from development prevalence; do not collect until the desired test outcomes appear.</p>
+<p>If 6,000 subjects are insufficient, the study must expand before unblinding, accept a wider inconclusive region, or explicitly reduce the scope. Repeated answers cannot substitute for missing independent subjects in Track A. Do not stop when a p-value first becomes favorable.</p>
+<h3 id="103-primary-decision-rules">10.3 Primary decision rules</h3>
+<p>Let L and U denote the paired 95% interval bounds.</p>
+<p><strong>Useful predictive improvement supported:</strong> <code>L(Delta_AUC) &gt; 0.020</code> and <code>L(Delta_Brier) &gt; 0.005</code>. Require all information-boundary and label checks to pass. Require the augmented score's calibration-error increase to have an upper bound below 0.010 before calling it a practical confidence improvement.</p>
+<p><strong>Useful improvement ruled out for this protocol:</strong> <code>U(Delta_AUC) &lt; 0.020</code> and <code>U(Delta_Brier) &lt; 0.005</code>. This rules out the registered practical effect, not every tiny improvement and not every possible MLP probe.</p>
+<p><strong>Harm supported:</strong> an interval for a primary improvement lies wholly below zero. Report the affected endpoint explicitly.</p>
+<p><strong>Mixed or inconclusive:</strong> every remaining pattern, including better ranking without better probability scoring, intervals crossing the practical margins, or inadequate calibration evidence. State exactly which part remains unresolved.</p>
+<p>To claim <strong>improved calibration itself</strong>, also require a corrected positive improvement in the prespecified calibration-error statistic. To claim <strong>reliable absolute probabilities</strong>, preregister an operational tolerance and demonstrate it at the tested bin resolution; a relative improvement alone is insufficient.</p>
+<p>For the <strong>within-question claim</strong>, require the multiplicity-adjusted lower bound on B+M minus B within-question AUROC to exceed +0.030. Also require an upper bound below 0.002 on any increase in all-answer Brier score. An adjusted upper bound below +0.030 rules out the registered within-question gain. Otherwise, this component is inconclusive. Include these requirements in its own power simulation; a plausible useful alternative is +0.060 within-question AUROC.</p>
+<p>For <strong>MLP-only replacement</strong>, report superiority separately from equivalence. An interval crossing zero does not establish equivalence. A corrected interval entirely inside [-0.020, +0.020] establishes practical AUROC equivalence at that registered margin, with probability-score checks still required.</p>
+<p>For the <strong>dominance mechanism</strong>, the selected concentration statistic must have the predicted held-out direction after controls, with an adjusted interval excluding zero. Top-contribution attenuation must impair success more than matched random attenuation, with a corrected interval excluding zero. Invariance tests must pass, and flatten/sharpen results must not systematically increase confidence while reducing success. Meeting these conditions supports the bounded mechanism tested here; inconsistent or imprecise results leave it unconfirmed. Report each component rather than hiding conflicts in an aggregate score.</p>
+<p>For the main practical claim, repeat the frozen procedure on the second model. Report model-specific decisions. A cross-model conclusion requires the primary criteria in both models. Do not pool a large gain in one model with a failure in the other and call the result universal.</p>
+<h3 id="104-claim-to-evidence-decision-map">10.4 Claim-to-evidence decision map</h3>
+<table>
+<thead>
+<tr>
+<th>Claim</th>
+<th>Required evidence</th>
+<th>Wording if evidence is absent</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Adding MLP improves confidence</td>
+<td>Primary B+M gain, probability-score gain, calibration guardrail, valid reference-free inputs</td>
+<td>No established practical confidence gain</td>
+</tr>
+<tr>
+<td>MLP should replace hidden states</td>
+<td>Corrected superiority of M over matched H</td>
+<td>Replacement is unsupported or inconclusive</td>
+</tr>
+<tr>
+<td>MLP adds information beyond difficulty</td>
+<td>Conditional gains plus Track B within-question gain over B</td>
+<td>Difficulty explanation remains viable</td>
+</tr>
+<tr>
+<td>Dominant interactions indicate reliable recall</td>
+<td>Directional concentration result, controls, and consistent interventions</td>
+<td>Mechanism unconfirmed, even if prediction improves</td>
+</tr>
+<tr>
+<td>Benefit generalizes</td>
+<td>Frozen-protocol replication on the second model and stated shift tests</td>
+<td>Restrict the conclusion to tested conditions</td>
+</tr>
+</tbody>
+</table>
+<p>A strong section 3.3 conclusion requires the practical, difficulty-control, and mechanistic evidence together. Otherwise, report the narrower result rather than a single unqualified yes.</p>
+<h2 id="11-required-ablations-and-failure-checks">11. Required ablations and failure checks</h2>
+<p>Freeze this list before the final test:</p>
+<ol>
+<li>Literal W2 similarities versus actual selection/contribution features.</li>
+<li>Concentration only, norm/direction only, and both.</li>
+<li>MLP-only, hidden-only, and their combination.</li>
+<li>Single-layer versus matched all-layer inputs.</li>
+<li>Matched dimension budget and matched nonlinear readout.</li>
+<li>B+M versus B with identical surface/probability features.</li>
+<li>Ordinary versus within-question pairwise training in Track B.</li>
+<li>Raw versus identically recalibrated scores.</li>
+<li>Reference-free features versus the historical oracle features, with the latter reported only as a development diagnostic.</li>
+<li>Label permutation, wrong-question feature replacement, reference-file swap, and hook reconstruction.</li>
+</ol>
+<p>Failure cases must include concentrated but wrong predictions, diffuse but correct predictions, low-popularity subjects, ambiguous aliases, repeated identical wrong answers, and prompt paraphrases. Report their frequencies, not only selected examples.</p>
+<h2 id="12-concrete-implementation-work-in-this-repository">12. Concrete implementation work in this repository</h2>
+<p>This is a plan, not a statement that the following commands or modules already exist.</p>
+<table>
+<thead>
+<tr>
+<th>Existing component</th>
+<th>Required change</th>
+<th>Acceptance check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>scripts/prepare_data.py</code></td>
+<td>Add fresh-cohort construction and immutable subject manifests under a new run directory</td>
+<td>Zero subject overlap; quotas and provenance report</td>
+</tr>
+<tr>
+<td><code>scripts/collect.py</code></td>
+<td>Separate label/reference storage from feature input; support pre-answer and generated-answer positions</td>
+<td>Reference-swap invariance; saved exact token IDs</td>
+</tr>
+<tr>
+<td><code>scripts/collect.py</code></td>
+<td>Add literal W2, gated, and contribution feature contracts</td>
+<td>Reconstruct actual MLP outputs and pass scaling controls</td>
+</tr>
+<tr>
+<td><code>scripts/probe_eval.py</code></td>
+<td>Fit complete preprocessing pipelines inside every fold</td>
+<td>Deliberate leakage tests fail; held-out records never fit transforms</td>
+</tr>
+<tr>
+<td><code>scripts/extra_probes.py</code></td>
+<td>Add fixed B/B+M, capacity controls, and within-question loss</td>
+<td>Same subjects, positions, tuning budget, and weights</td>
+</tr>
+<tr>
+<td>New calibration module</td>
+<td>Separate calibration fitting and threshold selection</td>
+<td>No test-label access; serialized calibration maps</td>
+</tr>
+<tr>
+<td>New difficulty module</td>
+<td>Train-only strata and question-level comparisons</td>
+<td>Correct target residuals; mixed-question counts</td>
+</tr>
+<tr>
+<td>New intervention module</td>
+<td>Identity, attenuation, matched random, flatten/sharpen</td>
+<td>Identity reproduces outputs; matched perturbation audit</td>
+</tr>
+<tr>
+<td><code>scripts/audit_artifacts.py</code></td>
+<td>Validate new schemas without altering historical files</td>
+<td>Reproducible labels, joins, predictions, and metric differences</td>
+</tr>
+<tr>
+<td><code>tests/test_signal_contract.py</code></td>
+<td>Extend tests to actual positions, reference exclusion, replay, and invariance</td>
+<td>CPU/unit tests plus a small model smoke test</td>
+</tr>
+</tbody>
+</table>
+<p>Suggested new run layout:</p>
+<pre><code class="language-text">runs/section33_v1/
+  protocol/          frozen design, margins, search space, power report
+  manifests/         subjects, splits, prompts, source revisions, hashes
+  labels/            reference data, adjudications, generation outcomes
+  features/          reference-free scalars, compressed vectors, schema
+  probes/            preprocessing, fitted readouts, calibrators
+  predictions/       one row per model/subject/question/answer/method
+  evaluation/        paired intervals, subgroup counts, decision.json
+  interventions/     settings, matched controls, regenerated outcomes
+  report/            claim decisions, tables, plots, failure examples
+</code></pre>
+<p>At minimum, each prediction row needs model revision, subject/question/answer IDs, split, target, generation seed, feature position, probe ID, raw score, calibrated score, and label-version hash. Keep references in a separate interface from feature collection. Do not overwrite the pilot artifacts.</p>
+<h2 id="13-execution-stages-and-gates">13. Execution stages and gates</h2>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Work</th>
+<th>Exit condition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0. Freeze definitions</td>
+<td>Claims, target populations, feature equations, comparison list</td>
+<td>Written protocol and traceable implementation specification</td>
+</tr>
+<tr>
+<td>1. Prove correctness</td>
+<td>50-question smoke test, replay, labels, hooks, leakage controls</td>
+<td>Every data/feature contract passes</td>
+</tr>
+<tr>
+<td>2. Build development cohort</td>
+<td>Fresh subjects, development collection, label audit</td>
+<td>Feasible quotas; usable class balance; measured costs</td>
+</tr>
+<tr>
+<td>3. Develop and size</td>
+<td>Select probes on development; simulate power and limits</td>
+<td>Frozen methods, margins, sample size, and calibration policy</td>
+</tr>
+<tr>
+<td>4. Fit and calibrate</td>
+<td>Final training; separate calibration and threshold selection</td>
+<td>Serialized frozen pipelines and report specification</td>
+</tr>
+<tr>
+<td>5. Open predictive test</td>
+<td>One evaluation on fresh subjects and the 733-question check</td>
+<td>Complete intervals and registered decisions, including failures</td>
+</tr>
+<tr>
+<td>6. Replicate and test mechanism</td>
+<td>Second model, difficulty tests, causal cohort</td>
+<td>Separate mechanism and replication decisions</td>
+</tr>
+<tr>
+<td>7. Write verdict</td>
+<td>Complete claim table, costs, and failure analysis</td>
+<td>Bounded yes/no/inconclusive answer for every subclaim</td>
+</tr>
+</tbody>
+</table>
+<p>Development futility is a resource decision. If no reference-free MLP variant survives strong controls on development, stop with a development-level negative result. This does not count as a definitive held-out rejection. A formal negative answer still needs the powered frozen test.</p>
+<p>If the primary final test is inconclusive, do not tune on it. Any follow-up requires a new versioned protocol and fresh test subjects, or a sequential design specified before the original unblinding.</p>
+<h2 id="14-compute-storage-annotation-and-schedule">14. Compute, storage, annotation, and schedule</h2>
+<p>The historical log records about 70 minutes for 1,087 questions with 30 sampled answers and about 25 minutes for its feature pass. Those measurements are a reference only. The new two-track experiment adds answer replays, confidence calls, more feature definitions, a second model, and interventions.</p>
+<p>For 6,000–9,600 fresh questions, each model produces 54,000–86,400 primary answer sequences: one greedy plus eight sampled answers per question. Confidence collection can require up to the same number of additional calls, with caching of duplicate candidate answers. The two-model plan roughly doubles those counts. Paraphrases, the 733-question check, and causal interventions add work.</p>
+<p>Benchmark the 50-question smoke test at realistic batch sizes. Record generated tokens/second, replay tokens/second, questions/hour, peak memory, and disk bytes/question. Estimate the full cost from these measured components, then add a stated contingency. Do not promise completion from the old generation timing alone.</p>
+<p>The pilot stored about 5.5 GB of raw tensors for 1,087 questions at two positions. Linear scaling would put an equivalent primary collection at roughly 30–50 GB before additional sampled-answer positions. Full raw storage for every sampled answer could reach hundreds of GB. Instead:</p>
+<ul>
+<li>Store scalar summaries and fixed random projections broadly.</li>
+<li>Store exact raw vectors only for the training-fitted PCA path and a preregistered audit subset, or replay tokens for selected representations.</li>
+<li>Fit streaming PCA on training data only; then replay all splits through the frozen transform.</li>
+<li>Precompute weight-column norms. Compute contribution magnitudes without materializing every vector <code>c_j</code>.</li>
+<li>Benchmark literal W2 similarities separately; they add matrix operations across layers.</li>
+<li>Save token IDs and seeds so expensive representations can be reproduced.</li>
+</ul>
+<p>Annotation can be the bottleneck. Let U be the number of unique question–candidate pairs and t the measured review time in minutes. Two-reviewer effort is approximately <code>2 * U * t / 60</code> hours, plus disagreement resolution. Measure U and t during development. Budget final-label review explicitly rather than assuming automatic matches are ground truth.</p>
+<p>A reasonable work sequence is several days for contracts and data assembly, several days for development and power analysis, then measured collection and annotation time. A calendar date should follow the benchmark and annotation sample. No long GPU collection or model download is part of writing this plan.</p>
+<h2 id="15-final-report-and-completion-checklist">15. Final report and completion checklist</h2>
+<p>The final report should open with one sentence per subclaim: supported, useful effect ruled out, harmful, or inconclusive. It should include:</p>
+<ul>
+<li>A primary B versus B+M table with AUROC, Brier score, calibration, latency, and paired intervals.</li>
+<li>A direct H versus H+M replication table and M-only replacement result.</li>
+<li>A within-question comparison with eligible-subject counts.</li>
+<li>A capacity/feature ablation table.</li>
+<li>Reliability and risk–coverage plots.</li>
+<li>Concentration-versus-success plots and intervention results, including wrong high-concentration answers.</li>
+<li>A model-by-model replication table and a population/split provenance table.</li>
+<li>A machine-readable decision file applying the registered thresholds.</li>
+</ul>
+<h3 id="adversarial-self-review-of-this-plan">Adversarial self-review of this plan</h3>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Question</th>
+<th>Resolution</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Contribution</td>
+<td>Could any positive result just repeat the pilot?</td>
+<td>Main comparison removes reference inputs, strengthens baselines, and uses a fresh test</td>
+</tr>
+<tr>
+<td>Clarity</td>
+<td>Does “confidence improves” have a fixed meaning?</td>
+<td>Ranking, probability scoring, calibration, and mechanism receive separate decisions</td>
+</tr>
+<tr>
+<td>Experimental strength</td>
+<td>Can the study distinguish no useful gain from low power?</td>
+<td>Practical margins, two-sided decisions, development-only power simulation, and explicit inconclusive outcomes</td>
+</tr>
+<tr>
+<td>Evaluation completeness</td>
+<td>Can difficulty, capacity, or one model explain the result?</td>
+<td>Same-question tests, matched controls, another model family, and shift checks</td>
+</tr>
+<tr>
+<td>Method soundness</td>
+<td>Does the feature name match actual computation?</td>
+<td>Literal W2 similarity is separate from gated selection and contribution concentration</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Completion criterion:</strong> The study is complete when every registered subclaim has an evidence-backed decision and all required validity checks pass. It is not complete merely because one comparison has a favorable p-value.</p></body></html>

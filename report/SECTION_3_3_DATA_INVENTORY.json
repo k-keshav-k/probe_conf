@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-07",
+  "source_arrow": "/home/keshav-krishna/.cache/huggingface/datasets/akariasai___pop_qa/default/0.0.0/098765c79ea10a2cb19c828324e33281b8336ec0/pop_qa-test.arrow",
+  "label_files": [
+    "results/fs15_labels.csv",
+    "results/pilot7b_labels.csv",
+    "results/q7b_labels.csv",
+    "results/quick_labels.csv"
+  ],
+  "full_questions": 14267,
+  "full_subjects": 12244,
+  "previously_seen_subjects": 1066,
+  "four_relation_questions": 1873,
+  "four_relation_subjects": 1799,
+  "fresh_four_relation_questions": 733,
+  "fresh_four_relation_subjects": 733,
+  "relation_counts": {
+    "father": {
+      "all": 570,
+      "fresh": 237
+    },
+    "mother": {
+      "all": 187,
+      "fresh": 0
+    },
+    "place of birth": {
+      "all": 584,
+      "fresh": 276
+    },
+    "occupation": {
+      "all": 532,
+      "fresh": 220
+    }
+  }
+}

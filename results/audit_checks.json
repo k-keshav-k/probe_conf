@@ -1,0 +1,595 @@
+{
+  "questions": 1087,
+  "unique_subjects": 1046,
+  "relation_counts": {
+    "place of birth": 300,
+    "occupation": 300,
+    "mother": 187,
+    "father": 300
+  },
+  "feature_shape": [
+    1087,
+    967
+  ],
+  "sample_count": 32610,
+  "sample_label_replay": "pass",
+  "mean_fraction": 0.17046918141674333,
+  "fraction_positive": 179,
+  "greedy_positive": 210,
+  "confidence_mean": 90.86108555657773,
+  "confidence_median": 95.0,
+  "invalid_confidence": 3,
+  "confidence_fraction_spearman": 0.04069223707808373,
+  "confidence_popularity_spearman": 0.07859348514093793,
+  "raw_confidence_auroc": 0.5336764452538577,
+  "p_gold_auroc": 0.800623877144193,
+  "substring_only_matches": [
+    {
+      "id": 5304362,
+      "text": "policeman"
+    },
+    {
+      "id": 747913,
+      "text": "Aberdeenshire"
+    },
+    {
+      "id": 2749201,
+      "text": "Rotterdam"
+    },
+    {
+      "id": 2749201,
+      "text": "Rotterdam"
+    },
+    {
+      "id": 2749201,
+      "text": "Rotterdam"
+    },
+    {
+      "id": 2749201,
+      "text": "Rotterdam"
+    },
+    {
+      "id": 2749201,
+      "text": "Rotterdam"
+    },
+    {
+      "id": 2749201,
+      "text": "Rotterdam"
+    },
+    {
+      "id": 2749201,
+      "text": "Rotterdam"
+    },
+    {
+      "id": 3004507,
+      "text": "Edward II"
+    },
+    {
+      "id": 3004507,
+      "text": "Edward II"
+    },
+    {
+      "id": 3004507,
+      "text": "Edward II"
+    },
+    {
+      "id": 3004507,
+      "text": "Edward II"
+    },
+    {
+      "id": 3004507,
+      "text": "Edward II"
+    },
+    {
+      "id": 1695756,
+      "text": "Rotterdam"
+    },
+    {
+      "id": 1695756,
+      "text": "Rotterdam"
+    },
+    {
+      "id": 1695756,
+      "text": "Rotterdam"
+    },
+    {
+      "id": 5575512,
+      "text": "Sigurdumerator"
+    },
+    {
+      "id": 5575512,
+      "text": "Sigurdumerator Garten"
+    },
+    {
+      "id": 2411732,
+      "text": "soldier, policeman"
+    },
+    {
+      "id": 2411732,
+      "text": "police officer"
+    },
+    {
+      "id": 4265255,
+      "text": "police officer"
+    },
+    {
+      "id": 4265255,
+      "text": "police officer"
+    },
+    {
+      "id": 3028807,
+      "text": "Jord\u00f3wna"
+    },
+    {
+      "id": 3028807,
+      "text": "Jord\u00f3wna"
+    },
+    {
+      "id": 3028807,
+      "text": "Jordaniu"
+    },
+    {
+      "id": 3028807,
+      "text": "Jordaniuconti"
+    },
+    {
+      "id": 3028807,
+      "text": "Jordegovia"
+    },
+    {
+      "id": 1286497,
+      "text": "Duncan III"
+    },
+    {
+      "id": 2240375,
+      "text": "Philip II of Macedonia"
+    },
+    {
+      "id": 3786129,
+      "text": "Marialetizia Bonaparte"
+    },
+    {
+      "id": 2049787,
+      "text": "Edward IV"
+    },
+    {
+      "id": 2049787,
+      "text": "Edward IV"
+    },
+    {
+      "id": 2049787,
+      "text": "King Edward IV"
+    },
+    {
+      "id": 2049787,
+      "text": "Edward IV"
+    },
+    {
+      "id": 2049787,
+      "text": "Edward IV"
+    },
+    {
+      "id": 2049787,
+      "text": "Edward IV"
+    },
+    {
+      "id": 2049787,
+      "text": "Edward IV"
+    },
+    {
+      "id": 2049787,
+      "text": "Edward IV"
+    },
+    {
+      "id": 2049787,
+      "text": "King Edward IV"
+    },
+    {
+      "id": 663859,
+      "text": "Hamburg"
+    },
+    {
+      "id": 663859,
+      "text": "Hamburg"
+    },
+    {
+      "id": 663859,
+      "text": "Hamburg"
+    },
+    {
+      "id": 663859,
+      "text": "Duisburg"
+    },
+    {
+      "id": 663859,
+      "text": "Hamburg"
+    },
+    {
+      "id": 922670,
+      "text": "comedian, political commentator"
+    },
+    {
+      "id": 922670,
+      "text": "comedian, political commentator"
+    },
+    {
+      "id": 3528532,
+      "text": "political analyst"
+    },
+    {
+      "id": 6515003,
+      "text": "Kupesty"
+    },
+    {
+      "id": 3338431,
+      "text": "Peter III of Portugal"
+    },
+    {
+      "id": 1881360,
+      "text": "Suzanne McCaffrey"
+    },
+    {
+      "id": 2631870,
+      "text": "Anunnaki mythology does not specify"
+    },
+    {
+      "id": 2631870,
+      "text": "Anunnaki mythology does not specify"
+    },
+    {
+      "id": 2631870,
+      "text": "Anunnaki mythology does not specify"
+    },
+    {
+      "id": 5253250,
+      "text": "David Landers"
+    },
+    {
+      "id": 6467777,
+      "text": "Mayadevi"
+    }
+  ],
+  "strict_match_diagnostic": {
+    "sample_matches": 5503,
+    "mean_fraction": 0.16875191659000305,
+    "positive_count": 176,
+    "threshold_changes": [
+      {
+        "id": 3028807,
+        "question": "Who is the mother of Thor?",
+        "historical_fraction": 0.6333333,
+        "token_boundary_fraction": 0.4666666666666667
+      },
+      {
+        "id": 3786129,
+        "question": "Who is the mother of Napoleon?",
+        "historical_fraction": 0.5,
+        "token_boundary_fraction": 0.4666666666666667
+      },
+      {
+        "id": 2631870,
+        "question": "Who is the father of Adad?",
+        "historical_fraction": 0.5,
+        "token_boundary_fraction": 0.4
+      }
+    ]
+  },
+  "three_character_alias_count": 135,
+  "popularity_bins": [
+    {
+      "bin": 0,
+      "n": 218,
+      "min_views": 21,
+      "max_views": 160,
+      "median_views": 94.5,
+      "fraction_positive_rate": 0.06880733944954129,
+      "mean_fraction": 0.07920489330275228,
+      "greedy_accuracy": 0.0963302752293578,
+      "confidence_mean": 90.91743119266054
+    },
+    {
+      "bin": 1,
+      "n": 217,
+      "min_views": 161,
+      "max_views": 505,
+      "median_views": 284.0,
+      "fraction_positive_rate": 0.08755760368663594,
+      "mean_fraction": 0.08817204329493088,
+      "greedy_accuracy": 0.11059907834101383,
+      "confidence_mean": 91.06451612903226
+    },
+    {
+      "bin": 2,
+      "n": 217,
+      "min_views": 506,
+      "max_views": 1771,
+      "median_views": 938.0,
+      "fraction_positive_rate": 0.08755760368663594,
+      "mean_fraction": 0.10937020002304147,
+      "greedy_accuracy": 0.11059907834101383,
+      "confidence_mean": 90.5852534562212
+    },
+    {
+      "bin": 3,
+      "n": 217,
+      "min_views": 1844,
+      "max_views": 10620,
+      "median_views": 3966.0,
+      "fraction_positive_rate": 0.21658986175115208,
+      "mean_fraction": 0.21705069168202765,
+      "greedy_accuracy": 0.2534562211981567,
+      "confidence_mean": 89.89400921658986
+    },
+    {
+      "bin": 4,
+      "n": 218,
+      "min_views": 10742,
+      "max_views": 15101521,
+      "median_views": 51906.0,
+      "fraction_positive_rate": 0.3623853211009174,
+      "mean_fraction": 0.35810397506880737,
+      "greedy_accuracy": 0.3944954128440367,
+      "confidence_mean": 91.83944954128441
+    }
+  ],
+  "confidence_bins": [
+    {
+      "lo_exclusive": 0,
+      "hi_inclusive": 60,
+      "n": 18,
+      "fraction_positive_rate": 0.1111111111111111,
+      "mean_fraction": 0.1222222225,
+      "greedy_accuracy": 0.1111111111111111
+    },
+    {
+      "lo_exclusive": 60,
+      "hi_inclusive": 80,
+      "n": 9,
+      "fraction_positive_rate": 0.0,
+      "mean_fraction": 0.022222222777777776,
+      "greedy_accuracy": 0.0
+    },
+    {
+      "lo_exclusive": 80,
+      "hi_inclusive": 90,
+      "n": 387,
+      "fraction_positive_rate": 0.1111111111111111,
+      "mean_fraction": 0.12299741599483205,
+      "greedy_accuracy": 0.1421188630490956
+    },
+    {
+      "lo_exclusive": 90,
+      "hi_inclusive": 95,
+      "n": 440,
+      "fraction_positive_rate": 0.23636363636363636,
+      "mean_fraction": 0.23439393990909094,
+      "greedy_accuracy": 0.2681818181818182
+    },
+    {
+      "lo_exclusive": 95,
+      "hi_inclusive": 100,
+      "n": 230,
+      "fraction_positive_rate": 0.12608695652173912,
+      "mean_fraction": 0.1356521739130435,
+      "greedy_accuracy": 0.14782608695652175
+    }
+  ],
+  "scores": {
+    "frac": {
+      "H_ans_l18": {
+        "auroc": 0.8705116530898531,
+        "surface_gap_spearman": 0.14453281147272146
+      },
+      "Msum_ans_l0": {
+        "auroc": 0.8530873920212635,
+        "surface_gap_spearman": 0.23574949307845036
+      },
+      "Msum_last_l2": {
+        "auroc": 0.8630177441980657,
+        "surface_gap_spearman": 0.23685038623804414
+      },
+      "Mraw_sel_ans_l16": {
+        "auroc": 0.8529274235227524,
+        "surface_gap_spearman": 0.16596795219838914
+      },
+      "H18+Msum_ans_l18": {
+        "auroc": 0.8710346270272932,
+        "surface_gap_spearman": 0.14564169301931204
+      },
+      "H18+Msum_last_l2": {
+        "auroc": 0.8787131149558242,
+        "surface_gap_spearman": 0.15369480930870014
+      },
+      "H18+Msum_ans_l0": {
+        "auroc": 0.8784608569389413,
+        "surface_gap_spearman": 0.15352215737499847
+      },
+      "H18+Msum_all": {
+        "auroc": 0.9070829129033053,
+        "surface_gap_spearman": 0.1987421084079614
+      },
+      "surface": {
+        "auroc": 0.7857221962444318,
+        "surface_gap_spearman": -0.3031869422330679
+      },
+      "prob": {
+        "auroc": 0.884564270420594,
+        "surface_gap_spearman": 0.21012046786571828
+      },
+      "confidence": {
+        "auroc": 0.5322459577190956,
+        "surface_gap_spearman": -0.003722892239718538
+      }
+    },
+    "greedy": {
+      "H_ans_l18": {
+        "auroc": 0.8526524406798068,
+        "surface_gap_spearman": 0.15161699750396307
+      },
+      "Msum_ans_l0": {
+        "auroc": 0.8340663517402399,
+        "surface_gap_spearman": 0.22360620170811285
+      },
+      "Msum_last_l2": {
+        "auroc": 0.820681978606722,
+        "surface_gap_spearman": 0.26037087497534084
+      },
+      "Mraw_sel_ans_l16": {
+        "auroc": 0.8356681327034804,
+        "surface_gap_spearman": 0.16074137052565626
+      },
+      "H18+Msum_ans_l18": {
+        "auroc": 0.8543845360264972,
+        "surface_gap_spearman": 0.1534743722302122
+      },
+      "H18+Msum_last_l2": {
+        "auroc": 0.8608622468371614,
+        "surface_gap_spearman": 0.161214549316542
+      },
+      "H18+Msum_ans_l0": {
+        "auroc": 0.8593907802573708,
+        "surface_gap_spearman": 0.16046317377994807
+      },
+      "H18+Msum_all": {
+        "auroc": 0.8847369278384103,
+        "surface_gap_spearman": 0.20579196785951434
+      },
+      "surface": {
+        "auroc": 0.7615681164141825,
+        "surface_gap_spearman": -0.3198815560452971
+      },
+      "prob": {
+        "auroc": 0.8469674757017973,
+        "surface_gap_spearman": 0.21081983996079467
+      },
+      "confidence": {
+        "auroc": 0.5242167562578054,
+        "surface_gap_spearman": -0.00861160027549439
+      }
+    }
+  },
+  "paired": {
+    "frac": {
+      "H18+Msum_all minus H_ans_l18": {
+        "point": 0.03657125981345222,
+        "bootstrap_mean": 0.036346097562331224,
+        "ci": [
+          0.023096824522142047,
+          0.05057786951448956
+        ]
+      },
+      "Msum_last_l2 minus H_ans_l18": {
+        "point": -0.007493908891787471,
+        "bootstrap_mean": -0.008383164972757847,
+        "ci": [
+          -0.040913347487330914,
+          0.023639425857080412
+        ]
+      },
+      "H18+Msum_all minus prob": {
+        "point": 0.022518642482711293,
+        "bootstrap_mean": 0.02274330380297095,
+        "ci": [
+          -0.006575080461064356,
+          0.04985477620795796
+        ]
+      }
+    },
+    "greedy": {
+      "H18+Msum_all minus H_ans_l18": {
+        "point": 0.03208448715860346,
+        "bootstrap_mean": 0.03199507628317702,
+        "ci": [
+          0.020762318555248162,
+          0.04395490561643616
+        ]
+      },
+      "Msum_last_l2 minus H_ans_l18": {
+        "point": -0.03197046207308485,
+        "bootstrap_mean": -0.03282528507642178,
+        "ci": [
+          -0.07005533520537441,
+          0.0017785894502139982
+        ]
+      },
+      "H18+Msum_all minus prob": {
+        "point": 0.03776945213661298,
+        "bootstrap_mean": 0.03795683099187176,
+        "ci": [
+          0.008506462945912221,
+          0.06646369099497619
+        ]
+      }
+    }
+  },
+  "frac_folds": [
+    {
+      "train": 870,
+      "test": 217,
+      "test_positive": 36
+    },
+    {
+      "train": 870,
+      "test": 217,
+      "test_positive": 35
+    },
+    {
+      "train": 869,
+      "test": 218,
+      "test_positive": 36
+    },
+    {
+      "train": 869,
+      "test": 218,
+      "test_positive": 36
+    },
+    {
+      "train": 870,
+      "test": 217,
+      "test_positive": 36
+    }
+  ],
+  "greedy_folds": [
+    {
+      "train": 870,
+      "test": 217,
+      "test_positive": 42
+    },
+    {
+      "train": 869,
+      "test": 218,
+      "test_positive": 42
+    },
+    {
+      "train": 870,
+      "test": 217,
+      "test_positive": 42
+    },
+    {
+      "train": 869,
+      "test": 218,
+      "test_positive": 42
+    },
+    {
+      "train": 870,
+      "test": 217,
+      "test_positive": 42
+    }
+  ],
+  "raw": {
+    "batches": 136,
+    "ids_and_shapes": "pass",
+    "all_values_finite": "pass",
+    "nonalignment_summary_values_recomputed": 730464
+  },
+  "verified": [
+    "question/label/feature/raw ID order",
+    "feature JSONL/Parquet agreement",
+    "30-sample labels replayed",
+    "OOF AUROCs",
+    "OOF confidence intervals",
+    "within-bin AUROCs",
+    "subject separation in recreated folds",
+    "raw tensor headers"
+  ]
+}

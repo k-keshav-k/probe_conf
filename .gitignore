@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+# probe_conf .gitignore
+# Keep: source code, notes, small reports and tables.
+# Exclude: environments, caches, raw activations, run data, and big binaries.
+# ---------------------------------------------------------------------------
+
+# --- Environments and caches -----------------------------------------------
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# --- Raw experiment data (many GB) -----------------------------------------
+results/raw/
+
+# --- Incremental dumps from interrupted runs (regenerable) ------------------
+results/*_partial.jsonl
+
+# --- Run artefacts (all generated; recreate with `python -m section33.cli setup`)
+/runs/
+
+# --- Generated datasets (top-level only; section33/data is source code) ------
+/data/
+
+# --- Large binary model and array formats ------------------------------------
+*.npz
+*.npy
+*.parquet
+*.arrow
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.gguf
+*.onnx
+*.h5
+*.msgpack
+*.pkl
+*.joblib
+
+# --- Archives and compressed files -------------------------------------------
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.tar.bz2
+*.7z
+*.gz
+*.bz2
+*.xz
+*.zst
+
+# --- Logs, temporary files, editor and OS files ------------------------------
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
