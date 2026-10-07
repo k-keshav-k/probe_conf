@@ -5,13 +5,21 @@ Run with:  .venv/bin/python -m pytest tests/test_section33_contracts.py -q
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
 import torch
 
 from section33.analysis.difficulty import within_question_auroc
-from section33.analysis.evaluation import decide_primary, decide_equivalence, decide_within_question
+from section33.analysis.evaluation import (
+    bootstrap_p_value,
+    calibration_guardrail_interval,
+    decide_primary,
+    decide_equivalence,
+    decide_within_question,
+)
 from section33.analysis.interventions import (
     attenuate_topk,
     identity,
@@ -21,13 +29,15 @@ from section33.analysis.interventions import (
 )
 from section33.data.cohort import assign_popularity_strata, assign_splits, exclude_seen, verify_disjoint
 from section33.data.labels import match_candidate, normalize, token_match
+from section33.datasets import expand_by_multiplicity, metadata_features
 from section33.features import families as fam
 from section33.features import mlp_math as mm
-from section33.features.hidden import HiddenProjector
+from section33.features.hidden import DEFAULT_PROJ_LAYERS, HiddenProjector, proj_layers
+from section33.features.probability import sequence_features
 from section33.models.collect import ModelWeights, extract_features_for_sequences
 from section33.models.contract import MLPCapture, mlp_modules, verify_mlp_contract
 from section33.probes.calibration import fit_calibrator
-from section33.probes.pipeline import Block, ProbeSpec, fit_probe
+from section33.probes.pipeline import Block, ProbeSpec, fit_probe, standard_specs
 from section33.smoke import _StubLoaded, _StubTokenizer, make_tiny_model
 
 
@@ -258,3 +268,279 @@ def test_negative_controls_keep_subject_blocks():
     shuffled = shuffle_within_strata(values, strata, seed=0)
     assert sorted(shuffled[:2].tolist()) == [1.0, 2.0]
     assert sorted(shuffled[2:].tolist()) == [3.0, 4.0]
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for the review fixes
+# ---------------------------------------------------------------------------
+def test_sequence_features_score_every_candidate_token():
+    """The off-by-one pairing scored token t+1 with the distribution for token t."""
+
+    vocab = 4
+    logits = torch.full((3, vocab), -20.0)
+    for index in range(3):
+        logits[index, index] = 20.0  # row t is confident on the correct token t
+    out = sequence_features(logits, [0, 1, 2], "answer_last_content")
+    assert out["prob__seq_logprob_sum__answer_last_content"] > -1e-3
+    assert out["prob__seq_logprob_min__answer_last_content"] > -1e-3
+    assert out["prob__seq_length__answer_last_content"] == 3.0
+    one_token = sequence_features(logits[:1], [0], "answer_last_content")
+    assert one_token["prob__seq_logprob_sum__answer_last_content"] > -1e-3
+
+
+def test_family_tensor_and_scalar_agree(tiny_model):
+    gate, up, down = mlp_modules(tiny_model.model.layers[0])
+    x = torch.randn(gate.weight.shape[1])
+    a, b, s, o = mm.mlp_activations(x, gate.weight.float(), up.weight.float(), down.weight.float())
+    v_norms = down.weight.float().norm(dim=0)
+    w2_dot = x @ down.weight.float()
+    scalar_tensors = mm.MLPTensors(
+        x=x, h_pre=x, h_post=x + o, a=a, b=b, s=s, o=o, v_norms=v_norms, w2_dot=w2_dot
+    )
+    batch_tensors = mm.MLPTensors(
+        x=x.unsqueeze(0), h_pre=x.unsqueeze(0), h_post=(x + o).unsqueeze(0),
+        a=a.unsqueeze(0), b=b.unsqueeze(0), s=s.unsqueeze(0), o=o.unsqueeze(0),
+        v_norms=v_norms, w2_dot=w2_dot.unsqueeze(0),
+    )
+    scalar = fam.build_all(scalar_tensors)
+    batched = fam.build_all_tensors(batch_tensors)
+    assert set(scalar) == set(batched)
+    for name, value in scalar.items():
+        assert batched[name][0].item() == pytest.approx(value, rel=1e-5, abs=1e-6), name
+
+
+def test_calibration_guardrail_direction():
+    rng = np.random.default_rng(0)
+    n = 240
+    frame = pd.DataFrame(
+        {
+            "subject_id": np.repeat(np.arange(60), 4).astype(str),
+            "relation": "father",
+            "stratum": "0",
+            "label": (rng.random(n) > 0.5).astype(int),
+        }
+    )
+    frame["overconfident"] = 0.9
+    frame["calibrated"] = frame["label"] * 0.9 + 0.05
+    low, high = calibration_guardrail_interval(
+        frame, "overconfident", "calibrated", "label", n_boot=60, seed=0
+    )
+    assert low > 0, "first argument is worse calibrated, so the increase must be positive"
+    reverse_low, _ = calibration_guardrail_interval(
+        frame, "calibrated", "overconfident", "label", n_boot=60, seed=0
+    )
+    assert reverse_low < 0
+
+
+def test_decision_requires_calibration_guardrail():
+    result = {
+        "delta_auc": 0.04,
+        "delta_auc_interval": [0.025, 0.055],
+        "delta_brier": 0.01,
+        "delta_brier_interval": [0.006, 0.014],
+    }
+    assert decide_primary(result, calibration_error_increase=(0.0, 0.004)).verdict == "useful_improvement_supported"
+    assert decide_primary(result, calibration_error_increase=(0.0, 0.020)).verdict != "useful_improvement_supported"
+
+
+def test_metadata_excludes_stated_confidence():
+    frame = pd.DataFrame(
+        {
+            "relation": ["father"],
+            "stratum": ["0"],
+            "content_length": [3],
+            "conf": [90.0],
+            "conf_parse_ok": [True],
+        }
+    )
+    meta = metadata_features(frame)
+    assert "meta_conf" not in meta.columns
+    assert "conf_missing" in meta.columns
+    specs = standard_specs()
+    assert not any(
+        "conf__" in prefix for block in specs["B"].blocks for prefix in block.include
+    ), "the B baseline must not contain the stated confidence"
+    assert any(
+        "conf__" in prefix for block in specs["V"].blocks for prefix in block.include
+    ), "the V comparator must exist"
+
+
+def test_proj_layers_map_by_relative_depth():
+    assert proj_layers(28) == DEFAULT_PROJ_LAYERS
+    layers32 = proj_layers(32)
+    assert len(layers32) == len(DEFAULT_PROJ_LAYERS)
+    assert layers32[0] == 0 and layers32[-1] == 31
+    assert all(0 <= layer < 32 for layer in layers32)
+    assert proj_layers(16) == tuple(sorted({round(f * 15) for f in
+                                            [layer / 27 for layer in DEFAULT_PROJ_LAYERS]}))
+
+
+def test_expand_by_multiplicity():
+    frame = pd.DataFrame({"multiplicity": [1, 3, 2], "value": [10, 20, 30]})
+    expanded = expand_by_multiplicity(frame)
+    assert len(expanded) == 6
+    assert sorted(expanded["value"].tolist()) == [10, 20, 20, 20, 30, 30]
+    assert len(expand_by_multiplicity(pd.DataFrame({"value": [1]}))) == 1
+
+
+def test_load_split_merges_shards_without_track_b_duplicates(tmp_path):
+    from section33.config import run_paths
+    from section33.datasets import load_split
+
+    paths = run_paths(tmp_path)
+    for folder in ("labels", "features"):
+        (tmp_path / folder).mkdir()
+
+    def label_row(answer_index, candidate):
+        return {
+            "model": "stub", "revision": "stub", "subject_id": "s1", "question_id": "q1",
+            "split": "dev", "track": "B", "answer_index": answer_index, "generation_seed": 0,
+            "candidate_text": candidate, "label": 1, "label_policy_version": "test",
+            "reference_answers": ["Fred"], "empty": False, "truncated": False,
+            "refusal": False, "exception": None, "multiplicity": 2,
+            "relation": "father", "popularity": 1.0, "stratum": "0",
+        }
+
+    def feature_row(answer_index, position="answer_last_content"):
+        return {
+            "model": "stub", "revision": "stub", "subject_id": "s1", "question_id": "q1",
+            "split": "dev", "track": "B", "answer_index": answer_index, "generation_seed": 0,
+            "position": position,
+            "f__prob__top1__answer_last_content": 0.5,
+            "prompt_token_hash": "x", "candidate_token_ids": [1, 2], "content_length": 2,
+            "feature_spec_version": "test", "multiplicity": 2,
+        }
+
+    def confidence_row(answer_index):
+        return {
+            "model": "stub", "revision": "stub", "subject_id": "s1", "question_id": "q1",
+            "split": "dev", "track": "B", "answer_index": answer_index, "generation_seed": 0,
+            "prompt_version": "test", "raw_text": "90", "value": 90.0, "parse_ok": True,
+        }
+
+    # The same candidate under two shard tags with different batch-local indices.
+    for tag, answer_index in (("shard0of2", 0), ("shard1of2", 9)):
+        (tmp_path / "labels" / f"trackB_answers__stub__{tag}.jsonl").write_text(
+            json.dumps(label_row(answer_index, "Fred")) + "\n"
+        )
+        (tmp_path / "labels" / f"trackB_confidence__stub__{tag}.jsonl").write_text(
+            json.dumps(confidence_row(answer_index)) + "\n"
+        )
+        (tmp_path / "features" / f"trackB_features__stub__{tag}.jsonl").write_text(
+            json.dumps(feature_row(answer_index)) + "\n"
+        )
+
+    frame = load_split(paths, "stub", "B")
+    assert len(frame) == 1
+    assert frame["candidate_text"].iloc[0] == "Fred"
+    assert int(frame["multiplicity"].iloc[0]) == 2
+
+
+def test_bootstrap_p_value():
+    assert bootstrap_p_value([0.1, 0.2, 0.3]) == pytest.approx(0.0)
+    assert bootstrap_p_value([-0.1, -0.2]) == pytest.approx(0.0)
+    assert bootstrap_p_value([-0.1, 0.1, 0.0]) == pytest.approx(1.0)
+
+
+def test_cmd_evaluate_end_to_end(tmp_path, monkeypatch):
+    """The frozen evaluation path runs, uses multiplicity, and writes every claim."""
+
+    import dataclasses
+    from types import SimpleNamespace
+
+    import section33.analysis.evaluation as evaluation
+    from section33.cli import cmd_evaluate
+    from section33.config import PROTOCOL, run_paths
+
+    # Small bootstrap for test speed; production uses 10,000.
+    monkeypatch.setattr(
+        evaluation,
+        "PROTOCOL",
+        dataclasses.replace(PROTOCOL, bootstrap_samples=150, bootstrap_seed=1),
+    )
+
+    paths = run_paths(tmp_path)
+    for folder in (tmp_path / "labels", tmp_path / "features", tmp_path / "evaluation"):
+        folder.mkdir(parents=True, exist_ok=True)
+
+    rng = np.random.default_rng(0)
+    subjects = [f"s{index}" for index in range(60)]
+    labels, confidences, features = [], [], []
+    for index, subject in enumerate(subjects):
+        if index < 36:
+            split = "train"
+        elif index < 48:
+            split = "calibration"
+        else:
+            split = "test"
+        ability = rng.normal()
+        question = f"q{index}"
+        for candidate in range(4):
+            label = int(ability + rng.normal() * 0.8 > 0)
+            confidence = float(np.clip(50 + 40 * ability + rng.normal() * 10, 0, 100))
+            multiplicity = 2 if candidate == 0 else 1
+            common = {
+                "model": "stub", "revision": "stub", "subject_id": subject,
+                "question_id": question, "split": split, "track": "B",
+                "answer_index": candidate, "generation_seed": 0,
+            }
+            labels.append(
+                {
+                    **common, "candidate_text": f"answer {candidate}", "label": label,
+                    "label_policy_version": "test", "reference_answers": ["answer"],
+                    "empty": False, "truncated": False, "refusal": False, "exception": None,
+                    "multiplicity": multiplicity, "relation": "father",
+                    "popularity": 1.0, "stratum": "0",
+                }
+            )
+            confidences.append(
+                {
+                    **common, "prompt_version": "test", "raw_text": str(int(confidence)),
+                    "value": confidence, "parse_ok": True, "multiplicity": multiplicity,
+                }
+            )
+            features.append(
+                {
+                    **common, "position": "answer_last_content",
+                    "f__meta__rel_father": 1.0,
+                    "f__meta__conf_missing": 0.0,
+                    "f__prob__top1__answer_last_content": float(np.clip(0.5 + 0.2 * ability, 0, 1)),
+                    "f__conf__stated": confidence,
+                    "f__hiddenproj__post__answer_last_content__l0__k0": ability + rng.normal() * 0.3,
+                    "f__contribution_concentration__e_top1_mass__answer_last_content__l0": ability + rng.normal() * 0.5,
+                    "prompt_token_hash": "x", "candidate_token_ids": [candidate],
+                    "content_length": 1, "feature_spec_version": "test",
+                    "multiplicity": multiplicity,
+                }
+            )
+
+    for name, rows in (
+        ("trackB_answers__stub__shard0of1", labels),
+        ("trackB_confidence__stub__shard0of1", confidences),
+    ):
+        with open(paths["labels"] / f"{name}.jsonl", "w") as handle:
+            for row in rows:
+                handle.write(json.dumps(row) + "\n")
+    with open(paths["features"] / "trackB_features__stub__shard0of1.jsonl", "w") as handle:
+        for row in features:
+            handle.write(json.dumps(row) + "\n")
+
+    payload = cmd_evaluate(SimpleNamespace(run=tmp_path, model="stub", track="B", seed=0))
+
+    assert payload["decision"]["verdict"] in {
+        "useful_improvement_supported", "useful_improvement_ruled_out",
+        "harm_supported", "inconclusive",
+    }
+    assert set(payload["secondary"]) == {
+        "replication_hidden_plus_mlp_minus_hidden",
+        "mlp_minus_hidden",
+        "augmented_minus_confidence",
+        "augmented_minus_probability",
+    }
+    assert payload["within_question"] is not None
+    assert payload["within_question"]["decision"]["verdict"].startswith("within_question")
+    # Multiplicity is applied: 12 test subjects x 4 candidates, plus one repeat
+    # per subject from the duplicated candidate.
+    assert payload["paired"]["n_subjects"] == 12
+    assert payload["paired"]["n_observations"] == 12 * 4 + 12
+    assert (tmp_path / "evaluation").glob("decision__*.json")

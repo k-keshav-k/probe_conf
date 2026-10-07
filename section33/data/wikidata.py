@@ -94,3 +94,19 @@ def attach_popularity(cohort: pd.DataFrame, pageview_csv: Path, subject_column: 
 
     views = pd.read_csv(pageview_csv)
     return cohort.merge(views, on=subject_column, how="left")
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Fetch a fresh Wikidata cohort for section33")
+    parser.add_argument("--out", type=Path, required=True, help="output CSV path")
+    parser.add_argument("--relations", nargs="*", default=None)
+    args = parser.parse_args(argv)
+    path = fetch_cohort(args.out, tuple(args.relations) if args.relations else None)
+    print(f"wrote {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

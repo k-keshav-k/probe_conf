@@ -39,14 +39,17 @@ def sequence_features(
 ) -> dict[str, float]:
     """Sequence log-probability statistics for the candidate tokens.
 
-    ``logits[t]`` predicts ``token_ids[t + 1]``.  ``token_ids[0]`` is the first
-    candidate token, so the slice starts one position earlier.
+    The caller passes one distribution per candidate token: ``logits[t]`` is the
+    next-token distribution at the position that produced ``token_ids[t]``
+    (the distribution for the first candidate token comes from the last prompt
+    position).  All ``n`` tokens are scored, including the first.
     """
 
-    if len(token_ids) <= 1:
+    n = len(token_ids)
+    if n == 0:
         return {}
-    shifted = logits[: len(token_ids) - 1].float()
-    targets = torch.tensor(token_ids[1:], device=shifted.device, dtype=torch.long)
+    shifted = logits[:n].float()
+    targets = torch.tensor(token_ids, device=shifted.device, dtype=torch.long)
     log_probability = F.log_softmax(shifted, dim=-1).gather(-1, targets.unsqueeze(-1)).squeeze(-1)
     token_entropy = -(torch.softmax(shifted, dim=-1) * F.log_softmax(shifted, dim=-1)).sum(-1)
     return {
@@ -54,5 +57,5 @@ def sequence_features(
         f"prob__seq_logprob_mean__{position}": float(log_probability.mean()),
         f"prob__seq_logprob_min__{position}": float(log_probability.min()),
         f"prob__seq_entropy_mean__{position}": float(token_entropy.mean()),
-        f"prob__seq_length__{position}": float(len(token_ids)),
+        f"prob__seq_length__{position}": float(n),
     }

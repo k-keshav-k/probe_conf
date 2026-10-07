@@ -120,11 +120,10 @@ class CollectSettings:
     positions: tuple[str, ...] = ("last_prompt", "answer_last_content")
     max_questions: int | None = None
     resume: bool = True
+    tag: str = ""  # shard or run tag appended to output file names
     hidden_proj: bool = True
     hidden_proj_dim: int = 64
     hidden_proj_seed: int = 11
-    store_raw: bool = False
-    raw_layers: tuple[int, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -257,35 +256,44 @@ def extract_features_for_sequences(
         h_pre = hidden[layer][rows.unsqueeze(1), columns]
         h_post = hidden[layer + 1][rows.unsqueeze(1), columns]
 
-        for row in range(len(sequences)):
-            for slot in range(n_positions):
-                tensors = mm.MLPTensors(
-                    x=x[row, slot],
-                    h_pre=h_pre[row, slot],
-                    h_post=h_post[row, slot],
-                    a=a[row, slot],
-                    b=b[row, slot],
-                    s=s[row, slot],
-                    o=o[row, slot],
-                    v_norms=weights.v_norms[layer],
-                    w2_dot=w2_dot[row, slot],
-                )
-                for stat, value in fam.build_all(tensors, families).items():
-                    results[row][f"{stat}__{position_names[slot]}__l{layer}"] = value
+        # Build all families for the whole batch of positions at once, then
+        # move one tensor to the CPU per statistic.  The per-token scalar path
+        # caused thousands of host-device syncs per sequence.
+        batch = x.shape[0]
+        flat = batch * n_positions
+        tensors = mm.MLPTensors(
+            x=x.reshape(flat, -1),
+            h_pre=h_pre.reshape(flat, -1),
+            h_post=h_post.reshape(flat, -1),
+            a=a.reshape(flat, -1),
+            b=b.reshape(flat, -1),
+            s=s.reshape(flat, -1),
+            o=o.reshape(flat, -1),
+            v_norms=weights.v_norms[layer],
+            w2_dot=w2_dot.reshape(flat, -1),
+        )
+        stat_tensors = fam.build_all_tensors(tensors, families)
+        stat_names = list(stat_tensors)
+        stacked = torch.stack([stat_tensors[name] for name in stat_names]).detach().cpu()
+        stat_values = dict(zip(stat_names, stacked.tolist()))
+        for slot, position in enumerate(position_names):
+            for row in range(batch):
+                index = row * n_positions + slot
+                target = results[row]
+                for name, values in stat_values.items():
+                    target[f"{name}__{position}__l{layer}"] = values[index]
 
         if hidden_projector is not None and layer in hidden_projector.layers:
-            pre_projection = hidden_projector.project(h_pre, layer, "pre")
-            post_projection = hidden_projector.project(h_post, layer, "post")
-            dim = hidden_projector.dim
-            for row in range(len(sequences)):
-                for slot in range(n_positions):
-                    position = position_names[slot]
+            pre_projection = hidden_projector.project(h_pre, layer, "pre").detach().cpu()
+            post_projection = hidden_projector.project(h_post, layer, "post").detach().cpu()
+            for row in range(batch):
+                for slot, position in enumerate(position_names):
                     for kind, projection in (("pre", pre_projection), ("post", post_projection)):
-                        values = projection[row, slot].detach().cpu()
-                        for index in range(dim):
+                        values = projection[row, slot].tolist()
+                        for index, value in enumerate(values):
                             results[row][
                                 f"hiddenproj__{kind}__{position}__l{layer}__k{index}"
-                            ] = float(values[index])
+                            ] = value
 
     if probability:
         position_logits = logits[rows.unsqueeze(1), columns]  # (B, P, V)
@@ -317,9 +325,10 @@ def collect_track_a(
     paths: dict[str, Path],
 ) -> dict:
     slug = model_slug(loaded.name)
-    labels_path = paths["labels"] / f"trackA_answers__{slug}.jsonl"
-    conf_path = paths["labels"] / f"trackA_confidence__{slug}.jsonl"
-    feat_path = paths["features"] / f"trackA_features__{slug}.jsonl"
+    suffix = f"__{slug}" + (f"__{settings.tag}" if settings.tag else "")
+    labels_path = paths["labels"] / f"trackA_answers{suffix}.jsonl"
+    conf_path = paths["labels"] / f"trackA_confidence{suffix}.jsonl"
+    feat_path = paths["features"] / f"trackA_features{suffix}.jsonl"
     for path in (labels_path, conf_path, feat_path):
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -433,9 +442,10 @@ def collect_track_b(
     paths: dict[str, Path],
 ) -> dict:
     slug = model_slug(loaded.name)
-    labels_path = paths["labels"] / f"trackB_answers__{slug}.jsonl"
-    conf_path = paths["labels"] / f"trackB_confidence__{slug}.jsonl"
-    feat_path = paths["features"] / f"trackB_features__{slug}.jsonl"
+    suffix = f"__{slug}" + (f"__{settings.tag}" if settings.tag else "")
+    labels_path = paths["labels"] / f"trackB_answers{suffix}.jsonl"
+    conf_path = paths["labels"] / f"trackB_confidence{suffix}.jsonl"
+    feat_path = paths["features"] / f"trackB_features{suffix}.jsonl"
     for path in (labels_path, conf_path, feat_path):
         path.parent.mkdir(parents=True, exist_ok=True)
 

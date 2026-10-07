@@ -59,35 +59,31 @@ def within_question_auroc(
     scores: np.ndarray,
     labels: np.ndarray,
     question_ids: np.ndarray,
-    weights: np.ndarray | None = None,
 ) -> dict:
     """Mean within-question AUROC over mixed-outcome questions.
 
     Ties count as one half.  Each eligible question contributes one value, so
     prolific subjects and questions with many samples cannot dominate.
+    Candidate multiplicity is handled by the caller: expand rows by
+    ``multiplicity`` before calling (``datasets.expand_by_multiplicity``).
     """
 
     scores = np.asarray(scores, dtype=float)
     labels = np.asarray(labels).astype(int)
     question_ids = np.asarray(question_ids)
-    weights = np.ones(len(scores)) if weights is None else np.asarray(weights, dtype=float)
     values = []
-    eligible = 0
     mixed = 0
     for question in np.unique(question_ids):
         mask = question_ids == question
         y = labels[mask]
         s = scores[mask]
-        w = weights[mask]
         if len(np.unique(y)) < 2:
             continue
         mixed += 1
-        # Weighted AUROC via pairwise comparison with half ties.
         pos = s[y == 1]
         neg = s[y == 0]
         wins = (pos[:, None] > neg[None, :]).sum() + 0.5 * (pos[:, None] == neg[None, :]).sum()
         values.append(float(wins / (len(pos) * len(neg))))
-        eligible += 1
     return {
         "within_question_auroc": float(np.mean(values)) if values else None,
         "eligible_questions": int(mixed),

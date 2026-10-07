@@ -115,6 +115,8 @@ def corrected_calibration_error(
 
     scores = np.asarray(scores, dtype=float)
     labels = np.asarray(labels).astype(int)
+    if len(scores) == 0:
+        return 0.0
     if edges is None:
         edges = np.linspace(0.0, 1.0, 11)
     total = 0.0
@@ -136,7 +138,9 @@ def corrected_calibration_error(
             variance_of_mean = (
                 float(np.var(cluster_means, ddof=1)) / n_clusters if n_clusters > 1 else 0.0
             )
-        total += max(0.0, n / len(scores)) * max(0.0, mean_r**2 - variance_of_mean)
+        # Negative contributions are kept: the plan requires comparing methods
+        # without clipping (section 9.2).
+        total += (n / len(scores)) * (mean_r**2 - variance_of_mean)
     return float(total)
 
 

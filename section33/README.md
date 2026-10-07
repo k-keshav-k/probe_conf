@@ -18,10 +18,10 @@ experiment. Run the stages on the cluster, one model at a time.
 | `section33/data/cohort.py` | Fresh cohort, exclusion, equal relation/popularity quotas, subject-grouped splits, hashed manifests |
 | `section33/data/labels.py` | Frozen token-boundary matching policy and adjudication helpers |
 | `section33/data/wikidata.py` | Wikidata Query Service helper for the four relations |
-| `section33/probes/pipeline.py` | Fold-internal imputation/scaling/PCA, B/B+M/H/M specs, 512-dim budget, nonlinear control |
+| `section33/probes/pipeline.py` | Fold-internal imputation/scaling/PCA, B/B+M/H/M/V/P specs, 512-dim budget, nonlinear control |
 | `section33/probes/calibration.py` | Identity/Platt/isotonic selection, reliability, risk-coverage, corrected calibration error |
 | `section33/analysis/difficulty.py` | Train-only strata, within-question AUROC, cross-fitted difficulty models, residuals |
-| `section33/analysis/evaluation.py` | Paired subject bootstrap, Holm correction, frozen yes/no rules |
+| `section33/analysis/evaluation.py` | Paired subject bootstrap, within-question bootstrap, bootstrap p-values, Holm correction, frozen yes/no rules |
 | `section33/analysis/interventions.py` | Identity, top-k attenuation, matched random controls, flatten/sharpen |
 | `section33/analysis/power.py` | Subject-level power simulation over the frozen test-size grid |
 | `section33/cli.py` | Stage commands |
@@ -86,8 +86,21 @@ one final evaluation on the test split.
 - Stage 3: `develop` writes the selection and the power table. Freeze the test
   size and margins here.
 - Stage 4: `evaluate` fits on train, calibrates on calibration, and writes
-  `evaluation/decision__*.json` with the registered verdict.
+  `evaluation/decision__*.json` with the registered primary verdict plus the
+  secondary decisions (H+M vs H replication, M vs H equivalence, B+M vs V,
+  B+M vs P, and the Track B within-question test). The secondary bootstrap
+  p-values are Holm-corrected over that family.
 - Stages 5–7: second model, mechanisms, and the written verdict.
+
+## Reference blocks
+
+- `D` is the metadata block. It contains relation, popularity, lengths, and
+  confidence **missingness only**. The stated confidence belongs to `V`.
+- `V` is the stated confidence comparator (`f__conf__stated`).
+- `B` = D + P + H, `B+M` = B + MLP families. Track B uses the answer-position
+  variants (`*_after`), where H is the hidden-state projection block matched
+  to the same position.
+- Candidate multiplicity is applied by expanding rows before every metric.
 
 ## Notes and limits of this implementation
 

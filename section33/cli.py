@@ -26,9 +26,14 @@ from sklearn.metrics import brier_score_loss, roc_auc_score
 
 from . import __version__
 from .analysis.evaluation import (
+    bootstrap_p_value,
     calibration_guardrail_interval,
+    decide_equivalence,
     decide_primary,
+    decide_within_question,
+    holm,
     paired_subject_bootstrap,
+    paired_within_question_bootstrap,
 )
 from .analysis.difficulty import within_question_auroc
 from .analysis.power import development_variance, power_table
@@ -39,12 +44,12 @@ from .data.cohort import (
     freeze_splits,
     load_seen_subjects,
 )
-from .datasets import load_split, metadata_features
+from .datasets import expand_by_multiplicity, load_split, metadata_features
 from .models.collect import CollectSettings, collect
 from .models.loader import load_model_and_tokenizer
 from .probes.calibration import fit_calibrator
-from .probes.pipeline import assemble_blocks, fit_probe, standard_specs
-from .utils import ensure_dirs, log, set_seed, sha256_file, write_json
+from .probes.pipeline import assemble_blocks, fit_probe, select_columns, standard_specs
+from .utils import ensure_dirs, log, set_seed, sha256_file, sha256_text, write_json
 
 
 def _slug(name: str) -> str:
@@ -155,9 +160,28 @@ def cmd_collect(args) -> dict:
     paths = run_paths(args.run)
     ensure_dirs(paths)
     cohort = pd.read_parquet(paths["manifests"] / "cohort.parquet")
+    if args.shards < 1:
+        raise SystemExit("--shards must be >= 1")
+    if args.shards > 1 and args.shard is None:
+        raise SystemExit(
+            "--shards > 1 requires an explicit --shard.  Use a Slurm job array "
+            "(--array=0-N) or pass --shard INDEX.  See cluster/05_collect.sbatch."
+        )
+    shard = 0 if args.shard is None else args.shard
+    if shard < 0 or shard >= args.shards:
+        log(f"shard {shard} is outside [0, {args.shards - 1}]; nothing to do")
+        return {"skipped": True, "split": args.split, "shard": shard, "shards": args.shards}
     block = cohort[cohort["split"] == args.split]
+    if args.shards > 1:
+        shard_of = block["subject_id"].map(
+            lambda subject: int(sha256_text(str(subject))[:12], 16) % args.shards
+        )
+        block = block[shard_of == shard]
     if args.limit:
         block = block.head(args.limit)
+    if block.empty:
+        raise SystemExit("no questions in this split and shard")
+    tag = args.tag or (f"shard{shard}of{args.shards}" if args.shards > 1 else "")
     questions = [
         CohortQuestion(
             question_id=str(row.question_id),
@@ -179,6 +203,7 @@ def cmd_collect(args) -> dict:
         max_questions=args.limit,
         generation_seed=args.seed,
         resume=not args.no_resume,
+        tag=tag,
     )
     outputs = collect(loaded, questions, settings, paths, track=args.track)
     log(f"collected track {args.track} for {len(questions)} questions")
@@ -192,6 +217,9 @@ def _add_metadata_columns(frame: pd.DataFrame) -> pd.DataFrame:
     meta = metadata_features(frame)
     for column in meta.columns:
         frame[f"f__meta__{column}"] = meta[column].to_numpy()
+    if "conf" in frame.columns:
+        # V comparator: the stated confidence, kept out of the D block.
+        frame["f__conf__stated"] = frame["conf"].astype(float)
     return frame
 
 
@@ -220,6 +248,13 @@ def cmd_develop(args) -> dict:
     train = frame[frame["split"] == "train"]
     dev = frame[frame["split"] == "dev"]
     specs = standard_specs()
+    # Keep only the specs that have matching features for this track and frame
+    # (for example, last-prompt hidden specs on an answer-position-only frame).
+    specs = {
+        name: spec
+        for name, spec in specs.items()
+        if any(select_columns(frame, block) for block in spec.blocks)
+    }
     results = {}
     predictions = {}
     for name, spec in specs.items():
@@ -241,10 +276,12 @@ def cmd_develop(args) -> dict:
     }
     write_json(paths["probes"] / f"dev_selection__{slug}__track{args.track}.json", selection)
 
-    if "B" in predictions and "B_plus_M" in predictions:
+    baseline_key = "B_after" if args.track.upper() == "B" else "B"
+    comparison_key = "B_plus_M_after" if args.track.upper() == "B" else "B_plus_M"
+    if baseline_key in predictions and comparison_key in predictions:
         dev = dev.copy()
-        dev["score_B"] = predictions["B"]
-        dev["score_B_plus_M"] = predictions["B_plus_M"]
+        dev["score_B"] = predictions[baseline_key]
+        dev["score_B_plus_M"] = predictions[comparison_key]
         auc_deltas, brier_deltas = _subject_deltas(dev, "score_B_plus_M", "score_B")
         variance = development_variance(auc_deltas, brier_deltas, seed=args.seed)
         power = power_table(variance["sd_auc"], variance["sd_brier"], correlation=variance["corr"])
@@ -256,62 +293,125 @@ def cmd_develop(args) -> dict:
 # ---------------------------------------------------------------------------
 # evaluation: frozen comparison on the final test
 # ---------------------------------------------------------------------------
+def _strip_samples(result: dict) -> dict:
+    """Drop the 10k bootstrap sample lists before writing JSON."""
+
+    return {key: value for key, value in result.items() if not key.endswith("_samples")}
+
+
 def cmd_evaluate(args) -> dict:
     paths = run_paths(args.run)
     ensure_dirs(paths)
     slug = _slug(args.model)
-    frame = load_split(paths, slug, args.track, splits=("train", "calibration", "test"))
+    track = args.track.upper()
+    frame = load_split(paths, slug, track, splits=("train", "calibration", "test"))
     if frame.empty:
         raise SystemExit("no evaluation data; run collect first")
     frame = _add_metadata_columns(frame)
     specs = standard_specs()
-    comparison = "B_plus_M_after" if args.track.upper() == "B" else "B_plus_M"
-    baseline = "B_after" if args.track.upper() == "B" else "B"
+
+    base = "B_after" if track == "B" else "B"
+    augment = "B_plus_M_after" if track == "B" else "B_plus_M"
+    hidden = "H_512_after" if track == "B" else "H_512"
+    hidden_plus = "H_all_plus_M_after" if track == "B" else "H_all_plus_M"
+    mlp = "M_all_after" if track == "B" else "M_all"
+    v_name = "V_after" if track == "B" else "V"
+    p_name = "P_after" if track == "B" else "P"
 
     train = frame[frame["split"] == "train"]
     calibration = frame[frame["split"] == "calibration"]
     test = frame[frame["split"] == "test"].copy()
+    if train.empty or calibration.empty or test.empty:
+        raise SystemExit("train, calibration, and test splits must all be non-empty")
+
     outputs = {}
-    for name in (baseline, comparison):
+    for name in dict.fromkeys((base, augment, hidden, hidden_plus, mlp, v_name, p_name)):
         spec = specs[name]
-        probe, best = fit_probe(train, train["label"].to_numpy(), train["subject_id"].to_numpy(), spec, seed=args.seed)
+        probe, best = fit_probe(
+            train, train["label"].to_numpy(), train["subject_id"].to_numpy(), spec, seed=args.seed
+        )
         raw_calibration = probe.predict(assemble_blocks(calibration, spec))
         calibrator, calibration_info = fit_calibrator(
             raw_calibration, calibration["label"].to_numpy(), calibration["subject_id"].to_numpy()
         )
-        raw_test = probe.predict(assemble_blocks(test, spec))
-        test[f"raw_{name}"] = raw_test
-        test[f"cal_{name}"] = calibrator.apply(raw_test)
-        outputs[name] = {"inner": best, "calibration": calibration_info}
-        log(f"{name}: test AUROC {roc_auc_score(test['label'], test[f'cal_{name}']):.4f}")
+        test[f"cal_{name}"] = calibrator.apply(probe.predict(assemble_blocks(test, spec)))
+        outputs[name] = {
+            "inner": best,
+            "calibration": calibration_info,
+            "test_auroc": float(roc_auc_score(test["label"], test[f"cal_{name}"]))
+            if test["label"].nunique() > 1
+            else None,
+        }
+        log(f"{name}: test AUROC {outputs[name]['test_auroc']}")
 
-    result = paired_subject_bootstrap(
-        test, f"cal_{comparison}", f"cal_{baseline}", "label",
-        subject="subject_id", strata=("relation", "stratum"), seed=args.seed,
-    )
+    # Every sampled answer counts once (plan section 5.2).
+    metric_frame = expand_by_multiplicity(test) if track == "B" else test
+
+    def paired(a: str, b: str) -> dict:
+        return paired_subject_bootstrap(
+            metric_frame, f"cal_{a}", f"cal_{b}", "label",
+            subject="subject_id", strata=("relation", "stratum"), seed=args.seed,
+        )
+
+    primary = paired(augment, base)
     guardrail = calibration_guardrail_interval(
-        test, f"cal_{comparison}", f"cal_{baseline}", "label",
+        metric_frame, f"cal_{augment}", f"cal_{base}", "label",
         subject="subject_id", strata=("relation", "stratum"), seed=args.seed,
     )
-    decision = decide_primary(result, calibration_error_increase=guardrail)
+    decision = decide_primary(primary, calibration_error_increase=guardrail)
+
+    secondary_specs = {
+        "replication_hidden_plus_mlp_minus_hidden": (hidden_plus, hidden),
+        "mlp_minus_hidden": (mlp, hidden),
+        "augmented_minus_confidence": (augment, v_name),
+        "augmented_minus_probability": (augment, p_name),
+    }
+    secondary = {}
+    raw_p_values = []
+    for key, (a, b) in secondary_specs.items():
+        result = paired(a, b)
+        p_value = bootstrap_p_value(result["delta_auc_samples"])
+        secondary[key] = {**_strip_samples(result), "comparison": a, "baseline": b, "p_auc": p_value}
+        raw_p_values.append(p_value)
+    for key, adjusted in zip(secondary, holm(raw_p_values)):
+        secondary[key]["p_auc_holm"] = adjusted
+    secondary["mlp_minus_hidden"]["decision"] = decide_equivalence(
+        tuple(secondary["mlp_minus_hidden"]["delta_auc_interval"])
+    ).to_row()
+
+    within = None
+    if track == "B":
+        within = paired_within_question_bootstrap(
+            metric_frame, f"cal_{augment}", f"cal_{base}", "label",
+            question="question_id", subject="subject_id",
+            strata=("relation", "stratum"), seed=args.seed,
+        )
+        brier_increase = (
+            -primary["delta_brier_interval"][1],
+            -primary["delta_brier_interval"][0],
+        )
+        within["brier_increase_interval"] = list(brier_increase)
+        within["decision"] = decide_within_question(
+            tuple(within["within_question_delta_interval"]), brier_increase
+        ).to_row()
+
     payload = {
         "model": args.model,
-        "track": args.track,
-        "comparison": comparison,
-        "baseline": baseline,
-        "paired": result,
+        "track": track,
+        "comparison": augment,
+        "baseline": base,
+        "paired": _strip_samples(primary),
         "calibration_guardrail_increase": list(guardrail),
         "decision": decision.to_row(),
+        "secondary": secondary,
+        "holm_family": list(secondary_specs),
+        "within_question": within,
         "methods": outputs,
     }
-    if args.track.upper() == "B":
-        within = within_question_auroc(
-            test[f"cal_{comparison}"].to_numpy(), test["label"].to_numpy(),
-            test["question_id"].to_numpy(), weights=test.get("multiplicity", pd.Series(1, index=test.index)).to_numpy(),
-        )
-        payload["within_question"] = within
-    write_json(paths["evaluation"] / f"decision__{slug}__track{args.track}.json", payload)
-    test.to_parquet(paths["predictions"] / f"test_predictions__{slug}__track{args.track}.parquet", index=False)
+    write_json(paths["evaluation"] / f"decision__{slug}__track{track}.json", payload)
+    test.to_parquet(
+        paths["predictions"] / f"test_predictions__{slug}__track{track}.parquet", index=False
+    )
     return payload
 
 
@@ -388,6 +488,9 @@ def build_parser() -> argparse.ArgumentParser:
     collect_cmd.add_argument("--batch", type=int, default=4)
     collect_cmd.add_argument("--dtype", default="float16")
     collect_cmd.add_argument("--seed", type=int, default=0)
+    collect_cmd.add_argument("--shards", type=int, default=1, help="split the split into N shards")
+    collect_cmd.add_argument("--shard", type=int, default=None, help="shard index, 0-based")
+    collect_cmd.add_argument("--tag", default="", help="tag appended to output file names")
     collect_cmd.add_argument("--no-resume", action="store_true")
     collect_cmd.set_defaults(func=cmd_collect)
 

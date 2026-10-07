@@ -24,6 +24,9 @@ Start with `report/REPORT.html` and `report/AUDIT.md`.
   and hooks, and probe training and evaluation. Includes an enlargement control.
 - `report/AUDIT.md`, `results/audit_checks.json` — findings and numerical checks.
 - `results/FINDINGS.md` — technical pilot results and interpretation
+- `section33/README.md` — how to run the confirmatory experiment
+- `cluster/README.md` — NYU Torch runbook (Slurm, storage, Apptainer overlay,
+  prefetch, job scripts)
 - `src/` — pipeline code
 - `scripts/` — entry points
 - `data/`, `results/` — generated artifacts

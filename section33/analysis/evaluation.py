@@ -116,9 +116,27 @@ def paired_subject_bootstrap(
         "delta_auc_interval": interval(deltas_auc),
         "delta_brier": float(np.mean(deltas_brier)),
         "delta_brier_interval": interval(deltas_brier),
+        "delta_auc_samples": [float(v) for v in deltas_auc],
+        "delta_brier_samples": [float(v) for v in deltas_brier],
         "bootstrap_seed": seed,
         "n_bootstrap": len(deltas_auc),
     }
+
+
+def bootstrap_p_value(deltas: list[float] | np.ndarray) -> float:
+    """Two-sided bootstrap p-value for a paired improvement.
+
+    The null value is zero.  The p-value is twice the smaller tail probability,
+    capped at one.  Multiplicity across comparisons is handled by the caller
+    with ``holm``.
+    """
+
+    values = np.asarray(deltas, dtype=float)
+    if len(values) == 0:
+        return float("nan")
+    left = float(np.mean(values <= 0))
+    right = float(np.mean(values >= 0))
+    return float(min(1.0, 2.0 * min(left, right)))
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +192,7 @@ def decide_primary(
     if calibration_error_increase is not None:
         details["calibration_error_increase"] = list(calibration_error_increase)
         calibration_ok = calibration_error_increase[1] < margins.calibration_epsilon
+    details["calibration_ok"] = calibration_ok
 
     if lo_auc > margins.main_auroc and lo_brier > margins.main_brier and calibration_ok:
         return Decision(
@@ -249,9 +268,14 @@ def calibration_guardrail_interval(
     n_boot: int = PROTOCOL.bootstrap_samples,
     seed: int = PROTOCOL.bootstrap_seed,
 ) -> tuple[float, float]:
-    """Paired interval of ``error(B) - error(B+M)``; positive means a rise."""
+    """Paired interval of ``error(score_a) - error(score_b)``.
 
-    from .calibration import corrected_calibration_error
+    Positive values mean that ``score_a`` (the first argument) is worse
+    calibrated.  ``cmd_evaluate`` passes the augmented score first, so the
+    interval is the increase that the primary guardrail checks.
+    """
+
+    from ..probes.calibration import corrected_calibration_error
 
     records = _subject_table(df, score_a, score_b, label, subject, list(strata))
     rng = np.random.default_rng(seed + 1)
@@ -269,7 +293,68 @@ def calibration_guardrail_interval(
         subjects = np.concatenate(
             [np.full(len(records[i]["labels"]), i) for i in sampled]
         )
-        error_b = corrected_calibration_error(b, labels, groups=subjects)
         error_a = corrected_calibration_error(a, labels, groups=subjects)
-        values.append(error_b - error_a)
+        error_b = corrected_calibration_error(b, labels, groups=subjects)
+        values.append(error_a - error_b)
     return float(np.percentile(values, 2.5)), float(np.percentile(values, 97.5))
+
+
+def _pairwise_auroc(pos: np.ndarray, neg: np.ndarray) -> float:
+    if len(pos) == 0 or len(neg) == 0:
+        return float("nan")
+    wins = (pos[:, None] > neg[None, :]).sum() + 0.5 * (pos[:, None] == neg[None, :]).sum()
+    return float(wins / (len(pos) * len(neg)))
+
+
+def paired_within_question_bootstrap(
+    df,
+    score_a: str,
+    score_b: str,
+    label: str = "label",
+    question: str = "question_id",
+    subject: str = "subject_id",
+    strata: tuple[str, ...] = ("relation", "stratum"),
+    n_boot: int = PROTOCOL.bootstrap_samples,
+    seed: int = PROTOCOL.bootstrap_seed,
+) -> dict:
+    """Bootstrap over subjects of the mean per-question AUROC difference.
+
+    Only mixed-outcome questions enter.  Every eligible question contributes
+    one value, so the estimate is the registered within-question estimand.
+    """
+
+    per_subject: dict = {}
+    eligible = 0
+    total_questions = df[question].nunique()
+    for question_id, block in df.groupby(question):
+        y = block[label].to_numpy()
+        if len(np.unique(y)) < 2:
+            continue
+        a = block[score_a].to_numpy()
+        b = block[score_b].to_numpy()
+        delta = _pairwise_auroc(a[y == 1], a[y == 0]) - _pairwise_auroc(b[y == 1], b[y == 0])
+        subject_id = block[subject].iloc[0]
+        strata_key = tuple(block[column].iloc[0] for column in strata)
+        record = per_subject.setdefault(subject_id, {"strata": strata_key, "deltas": []})
+        record["deltas"].append(delta)
+        eligible += 1
+    groups: dict[tuple, list] = {}
+    for subject_id, record in per_subject.items():
+        groups.setdefault(record["strata"], []).append(subject_id)
+    rng = np.random.default_rng(seed + 2)
+    values = []
+    for _ in range(n_boot):
+        sampled = []
+        for key, subject_ids in groups.items():
+            sampled.extend(rng.choice(subject_ids, size=len(subject_ids), replace=True))
+        deltas = np.concatenate([per_subject[subject_id]["deltas"] for subject_id in sampled])
+        values.append(float(deltas.mean()))
+    return {
+        "within_question_delta": float(np.mean(values)),
+        "within_question_delta_interval": [
+            float(np.percentile(values, 2.5)),
+            float(np.percentile(values, 97.5)),
+        ],
+        "eligible_questions": int(eligible),
+        "n_questions": int(total_questions),
+    }

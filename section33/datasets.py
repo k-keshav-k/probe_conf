@@ -23,20 +23,53 @@ def _read(path: Path) -> pd.DataFrame:
     return pd.DataFrame(read_jsonl(Path(path)))
 
 
+def _dedupe(frame: pd.DataFrame, subset: list[str]) -> pd.DataFrame:
+    """Drop duplicate rows, tolerating list-valued key columns."""
+
+    if frame.empty:
+        return frame
+    work = frame.copy()
+    for column in subset:
+        if column in work.columns:
+            work[column] = work[column].map(
+                lambda value: tuple(value) if isinstance(value, list) else value
+            )
+    return work.drop_duplicates(subset=[c for c in subset if c in work.columns], keep="first")
+
+
 def load_split(
     paths: dict[str, Path],
     model_slug: str,
     track: str,
     splits: tuple[str, ...] = ("train", "dev", "calibration", "test"),
 ) -> pd.DataFrame:
-    """Join labels, features, and confidence for one track and model."""
+    """Join labels, features, and confidence for one track and model.
 
-    suffix = f"__{model_slug}.jsonl"
-    labels = _read(paths["labels"] / f"track{track}_answers{suffix}")
-    features = _read(paths["features"] / f"track{track}_features{suffix}")
-    confidence = _read(paths["labels"] / f"track{track}_confidence{suffix}")
+    Sharded collections write one file group per shard.  All groups that match
+    ``track{track}_*__{model_slug}*`` are merged.  Track B keys on the candidate
+    itself, because ``answer_index`` is batch-local and can differ when the same
+    question was collected under a different shard tag.
+    """
+
+    def _glob_read(folder: str, pattern: str) -> pd.DataFrame:
+        frames = [_read(path) for path in sorted(Path(folder).glob(pattern))]
+        frames = [frame for frame in frames if not frame.empty]
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, ignore_index=True)
+
+    labels = _glob_read(paths["labels"], f"track{track}_answers__{model_slug}*.jsonl")
+    features = _glob_read(paths["features"], f"track{track}_features__{model_slug}*.jsonl")
+    confidence = _glob_read(paths["labels"], f"track{track}_confidence__{model_slug}*.jsonl")
     if labels.empty or features.empty:
         return pd.DataFrame()
+    if track.upper() == "B":
+        labels = _dedupe(labels, ["question_id", "track", "candidate_text"])
+        features = _dedupe(features, ["question_id", "track", "candidate_token_ids", "position"])
+    else:
+        labels = _dedupe(labels, ["question_id", "track", "answer_index"])
+        features = _dedupe(features, ["question_id", "track", "answer_index", "position"])
+    confidence = _dedupe(confidence, ["question_id", "track", "answer_index"])
     if track.upper() == "A":
         feature_primary = features[features["position"] == "last_prompt"]
     else:
@@ -69,22 +102,20 @@ def load_split(
     return merged
 
 
-def metadata_features(frame: pd.DataFrame, columns: tuple[str, ...] | None = None) -> pd.DataFrame:
+def metadata_features(frame: pd.DataFrame) -> pd.DataFrame:
     """Difficulty block D: relation one-hot, popularity, lengths, missingness.
 
-    Only columns present in the frame are used.  The plan requires that any
-    proposed metadata not yet collected is added before use.
+    The stated confidence score is deliberately excluded.  It belongs to the
+    separate V comparator (plan section 6.1: B = D + P + H).  Only the
+    missingness indicators for confidence are kept here.
     """
 
-    import numpy as np
-
-    available = columns or ("relation", "stratum", "content_length", "conf_missing")
     parts = []
     if "relation" in frame.columns:
         parts.append(pd.get_dummies(frame["relation"], prefix="rel").astype(float))
     if "stratum" in frame.columns:
         parts.append(pd.get_dummies(frame["stratum"], prefix="stratum").astype(float))
-    for column in ("popularity", "content_length", "prompt_tokens", "conf"):
+    for column in ("popularity", "content_length", "prompt_tokens"):
         if column in frame.columns:
             parts.append(frame[[column]].astype(float).rename(columns={column: f"meta_{column}"}))
     if "conf" in frame.columns:
@@ -100,3 +131,17 @@ def metadata_features(frame: pd.DataFrame, columns: tuple[str, ...] | None = Non
         return pd.DataFrame(index=frame.index)
     out = pd.concat(parts, axis=1)
     return out.fillna(0.0)
+
+
+def expand_by_multiplicity(frame: pd.DataFrame, column: str = "multiplicity") -> pd.DataFrame:
+    """Repeat each row by its sampling multiplicity.
+
+    Track B caches duplicate candidate strings but keeps their sampling
+    multiplicity.  Expanding before a metric makes every sampled answer count
+    once, as the plan requires.
+    """
+
+    if frame.empty or column not in frame.columns:
+        return frame.reset_index(drop=True)
+    weights = pd.to_numeric(frame[column], errors="coerce").fillna(1).astype(int).clip(lower=1)
+    return frame.loc[frame.index.repeat(weights)].reset_index(drop=True)

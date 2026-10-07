@@ -192,6 +192,10 @@ def _fit_once(matrices: dict, y: np.ndarray, spec: ProbeSpec, config: dict, seed
         preprocessors[block.name] = pre
     probe = FittedProbe(spec, preprocessors, None, seed)
     x = probe._features(matrices)
+    if x.shape[1] == 0:
+        # No matching features in this frame (for example a last-prompt spec on
+        # an answer-position-only Track B frame).  Predict a constant 0.5.
+        return probe
     classifier = _make_classifier(spec.classifier, config, seed)
     classifier.fit(x, y)
     probe.classifier = classifier
@@ -305,6 +309,8 @@ def standard_specs() -> dict[str, ProbeSpec]:
         "M_all_after": ProbeSpec("M_all_after", mlp_all_after),
         "P": ProbeSpec("P", (prob_block,)),
         "P_after": ProbeSpec("P_after", (prob_block_after,)),
+        "V": ProbeSpec("V", (Block("v", ("conf__",), positions=()),)),
+        "V_after": ProbeSpec("V_after", (Block("v", ("conf__",), positions=()),)),
         "H_proj": ProbeSpec(
             "H_proj",
             (Block("h", ("hiddenproj__post__",), positions=last, pca_dim=PROTOCOL.pca_budget),),
@@ -312,6 +318,10 @@ def standard_specs() -> dict[str, ProbeSpec]:
         "H_512": ProbeSpec(
             "H_512",
             (Block("h", ("hiddenproj__post__", "hiddenproj__pre__"), positions=last, pca_dim=PROTOCOL.pca_budget),),
+        ),
+        "H_512_after": ProbeSpec(
+            "H_512_after",
+            (Block("h", ("hiddenproj__post__", "hiddenproj__pre__"), positions=after, pca_dim=PROTOCOL.pca_budget),),
         ),
         "H_M_256_256": ProbeSpec(
             "H_M_256_256",
@@ -323,6 +333,10 @@ def standard_specs() -> dict[str, ProbeSpec]:
         "H_all_plus_M": ProbeSpec(
             "H_all_plus_M",
             (Block("h", ("hiddenproj__post__", "hiddenproj__pre__"), positions=last),) + mlp_all,
+        ),
+        "H_all_plus_M_after": ProbeSpec(
+            "H_all_plus_M_after",
+            (Block("h", ("hiddenproj__post__", "hiddenproj__pre__"), positions=after),) + mlp_all_after,
         ),
         "H_768": ProbeSpec(
             "H_768",

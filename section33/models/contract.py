@@ -36,8 +36,9 @@ def mlp_modules(layer):
 def verify_mlp_contract(model, atol: float = 5e-3) -> dict:
     """Check biases and reconstruction for every layer on a random batch.
 
-    The check runs one forward pass with a small random input and compares the
-    captured module output with ``W_down * (SiLU(W_gate x) * W_up x)``.
+    The check runs one forward pass with a small random input.  At every layer
+    it compares the captured module output with
+    ``W_down * (SiLU(W_gate x) * W_up x)``.
     """
 
     device = next(model.parameters()).device
@@ -54,17 +55,21 @@ def verify_mlp_contract(model, atol: float = 5e-3) -> dict:
             "down": down.bias is not None,
         }
 
-    probe_layer = layers[0]
-    captured: dict[str, torch.Tensor] = {}
+    captured: dict[int, dict[str, torch.Tensor]] = {index: {} for index in range(len(layers))}
+    handles = []
 
-    def pre_hook(module, args):
-        captured["x"] = args[0].detach()
+    for index, layer in enumerate(layers):
+        gate, _, down = mlp_modules(layer)
 
-    def out_hook(module, args, output):
-        captured["o"] = output.detach()
+        def pre_hook(module, args, index=index):
+            captured[index]["x"] = args[0].detach()
 
-    handle_x = probe_layer.mlp.gate_proj.register_forward_pre_hook(pre_hook)
-    handle_o = probe_layer.mlp.down_proj.register_forward_hook(out_hook)
+        def out_hook(module, args, output, index=index):
+            captured[index]["o"] = output.detach()
+
+        handles.append(gate.register_forward_pre_hook(pre_hook))
+        handles.append(down.register_forward_hook(out_hook))
+
     try:
         with torch.no_grad():
             dummy = torch.randn(1, 4, hidden, device=device, dtype=dtype)
@@ -74,16 +79,25 @@ def verify_mlp_contract(model, atol: float = 5e-3) -> dict:
                 use_cache=False,
             )
     finally:
-        handle_x.remove()
-        handle_o.remove()
+        for handle in handles:
+            handle.remove()
 
-    x = captured["x"].float()
-    gate, up, down = mlp_modules(probe_layer)
-    a, b, s, o = mm.mlp_activations(
-        x, gate.weight.float(), up.weight.float(), down.weight.float()
-    )
-    error = (o - captured["o"].float()).abs().max().item()
-    checks["reconstruction"] = {"max_abs_error": error, "passed": error <= atol}
+    per_layer_error = {}
+    for index, layer in enumerate(layers):
+        gate, up, down = mlp_modules(layer)
+        x = captured[index]["x"].float()
+        _, _, _, reconstructed = mm.mlp_activations(
+            x, gate.weight.float(), up.weight.float(), down.weight.float()
+        )
+        per_layer_error[index] = float(
+            (reconstructed - captured[index]["o"].float()).detach().abs().max()
+        )
+    max_error = max(per_layer_error.values())
+    checks["reconstruction"] = {
+        "max_abs_error": max_error,
+        "per_layer_max_error": per_layer_error,
+        "passed": max_error <= atol,
+    }
     checks["bias_free"] = all(
         not any(flags.values()) for flags in checks["biases"].values()
     )

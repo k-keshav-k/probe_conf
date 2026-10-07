@@ -15,6 +15,7 @@ from .difficulty import (  # noqa: F401
 from .evaluation import (  # noqa: F401
     Decision,
     auroc,
+    bootstrap_p_value,
     calibration_guardrail_interval,
     clip_probabilities,
     decide_equivalence,
@@ -23,6 +24,7 @@ from .evaluation import (  # noqa: F401
     holm,
     log_loss,
     paired_subject_bootstrap,
+    paired_within_question_bootstrap,
 )
 from .interventions import (  # noqa: F401
     InterventionResult,
