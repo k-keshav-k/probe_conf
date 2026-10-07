@@ -23,12 +23,33 @@ source "$REPO/cluster/env.sh"
 
 # Re-exec inside the container when the overlay is not mounted.
 if [ ! -d /ext3 ] && [ "${S33_IN_CONTAINER:-0}" != "1" ]; then
+  if [ ! -f "$OVERLAY" ]; then
+    echo "ERROR: overlay file not found: $OVERLAY" >&2
+    echo "Create it inside an interactive compute session:" >&2
+    echo "  srun --account=\"\$TORCH_ACCOUNT\" --cpus-per-task=4 --mem=16GB --time=02:00:00 --pty /bin/bash" >&2
+    echo "  cp -rp \"$OVERLAY_SRC\" \"$OVERLAY.gz\" && gunzip -f \"$OVERLAY.gz\"" >&2
+    echo "Then run cluster/01_setup_overlay.sh (cluster/README.md section 4)." >&2
+    exit 1
+  fi
   echo "== entering the section33 container =="
   export S33_IN_CONTAINER=1
   exec apptainer exec --overlay "$OVERLAY:ro" "$SIF" \
     /bin/bash "$REPO/cluster/02_prefetch.sh"
 fi
 
+if [ ! -f /ext3/env.sh ]; then
+  echo "ERROR: /ext3/env.sh is missing. The overlay environment is not built." >&2
+  echo "Run the one-time setup on a compute node first (cluster/README.md section 4):" >&2
+  echo "  srun --account=\"\$TORCH_ACCOUNT\" --cpus-per-task=4 --mem=16GB --time=02:00:00 --pty /bin/bash" >&2
+  echo "  apptainer exec --fakeroot --overlay \"\$OVERLAY:rw\" \"\$SIF\" /bin/bash" >&2
+  echo "  bash \$REPO/cluster/01_setup_overlay.sh" >&2
+  exit 1
+fi
+if [ ! -x /ext3/.venv/bin/python ]; then
+  echo "ERROR: /ext3 has no Python environment (/ext3/.venv missing)." >&2
+  echo "Rerun cluster/01_setup_overlay.sh. It needs internet on the compute node." >&2
+  exit 1
+fi
 source /ext3/env.sh
 
 echo "== Hugging Face token check =="

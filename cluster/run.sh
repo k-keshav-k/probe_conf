@@ -22,7 +22,12 @@ if [ "$#" -eq 0 ]; then
 fi
 
 if [ -d /ext3 ]; then
-  # Already inside the container.
+  # Already inside the container.  The overlay must contain the environment.
+  if [ ! -f /ext3/env.sh ]; then
+    echo "ERROR: /ext3/env.sh is missing. Build the overlay environment first:" >&2
+    echo "  bash \$REPO/cluster/01_setup_overlay.sh" >&2
+    exit 1
+  fi
   source /ext3/env.sh
   cd "$REPO"
   exec "$@"
