@@ -13,7 +13,7 @@
 # and writes evaluation/decision__*.json.  Runs both tracks.
 # ---------------------------------------------------------------------------
 #SBATCH --job-name=s33-evaluate
-#SBATCH --account=torch_pr_XXX_XXXXX
+#SBATCH --account=torch_pr_1363_cds
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
@@ -22,7 +22,7 @@
 #SBATCH --output=s33-evaluate-%j.out
 #SBATCH --error=s33-evaluate-%j.err
 #SBATCH --mail-type=END,FAIL
-#SBATCH --mail-user=XXX@nyu.edu
+#SBATCH --mail-user=kk6081@nyu.edu
 
 set -euo pipefail
 # Resolve the repository: explicit REPO, the submit directory, or the cwd.

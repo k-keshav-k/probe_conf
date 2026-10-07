@@ -20,7 +20,7 @@
 # utilization (see the docs).  Keep batches large; do not sleep between calls.
 # ---------------------------------------------------------------------------
 #SBATCH --job-name=s33-collect
-#SBATCH --account=torch_pr_XXX_XXXXX
+#SBATCH --account=torch_pr_1363_cds
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
@@ -31,7 +31,7 @@
 #SBATCH --output=s33-collect-%A_%a.out
 #SBATCH --error=s33-collect-%A_%a.err
 #SBATCH --mail-type=END,FAIL
-#SBATCH --mail-user=XXX@nyu.edu
+#SBATCH --mail-user=kk6081@nyu.edu
 
 set -euo pipefail
 # Resolve the repository: explicit REPO, the submit directory, or the cwd.

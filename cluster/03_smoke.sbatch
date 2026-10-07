@@ -12,7 +12,7 @@
 # small model.  Keep this job short; use it as a gate before long collection.
 # ---------------------------------------------------------------------------
 #SBATCH --job-name=s33-smoke
-#SBATCH --account=torch_pr_XXX_XXXXX
+#SBATCH --account=torch_pr_1363_cds
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
@@ -23,7 +23,7 @@
 #SBATCH --output=s33-smoke-%j.out
 #SBATCH --error=s33-smoke-%j.err
 #SBATCH --mail-type=END,FAIL
-#SBATCH --mail-user=XXX@nyu.edu
+#SBATCH --mail-user=kk6081@nyu.edu
 
 set -euo pipefail
 # Resolve the repository: explicit REPO, the submit directory, or the cwd.

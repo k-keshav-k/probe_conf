@@ -4,7 +4,7 @@
 # ---------------------------------------------------------------------------
 
 # Your Slurm account from `my_slurm_accounts` (required for every job).
-export TORCH_ACCOUNT="${TORCH_ACCOUNT:-torch_pr_XXX_XXXXX}"
+export TORCH_ACCOUNT="${TORCH_ACCOUNT:-torch_pr_1363_cds}"
 
 # Scratch space. Code, data, model cache, overlays and run output live here.
 # Override REPO before sourcing to keep the code in /home (recommended there:
