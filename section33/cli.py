@@ -35,7 +35,6 @@ from .analysis.evaluation import (
     paired_subject_bootstrap,
     paired_within_question_bootstrap,
 )
-from .analysis.difficulty import within_question_auroc
 from .analysis.power import (
     development_variance,
     paired_development_distribution,
@@ -59,7 +58,6 @@ from .probes.pipeline import (
     assemble_blocks,
     fit_probe,
     missing_blocks,
-    select_columns,
     spec_is_usable,
     standard_specs,
 )
