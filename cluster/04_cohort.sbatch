@@ -54,8 +54,12 @@ fi
 if [ "${DEV_TEST:-0}" = "1" ]; then
   echo "== development test cohort from the cached PopQA snapshot =="
   # shellcheck disable=SC2086
-  python -m section33.cli cohort --run "$RUN_DIR" --source "$COHORT_SOURCE" \
-      --seen $SEEN --per-relation 200 --train 300 --dev 150 --calibration 100 --test 183
+  srun apptainer exec --overlay "$OVERLAY:ro" "$SIF" /bin/bash -c "
+    source /ext3/env.sh
+    cd $REPO
+    python -m section33.cli cohort --run $RUN_DIR --source $COHORT_SOURCE \
+        --seen $SEEN --per-relation 200 --train 300 --dev 150 --calibration 100 --test 183
+  "
 else
   echo "== fresh cohort (plan section 4) =="
   if [ ! -f "$RUN_DIR/source/wikidata_cohort.csv" ]; then
@@ -64,9 +68,13 @@ else
     exit 1
   fi
   # shellcheck disable=SC2086
-  python -m section33.cli cohort --run "$RUN_DIR" \
-      --source "$RUN_DIR/source/wikidata_cohort.csv" \
-      --seen $SEEN --per-relation 1500
+  srun apptainer exec --overlay "$OVERLAY:ro" "$SIF" /bin/bash -c "
+    source /ext3/env.sh
+    cd $REPO
+    python -m section33.cli cohort --run $RUN_DIR \
+        --source $RUN_DIR/source/wikidata_cohort.csv \
+        --seen $SEEN --per-relation 1500
+  "
 fi
 
 echo "== manifest =="
