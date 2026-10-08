@@ -60,6 +60,26 @@ def _subject_table(df, score_a: str, score_b: str, label: str, subject: str, str
     return records
 
 
+def _resampling_groups(records, key) -> dict:
+    """Group record indices for stratified resampling.
+
+    A stratum cell with one unit cannot vary under within-cell resampling and
+    would contribute zero variance.  Singleton cells are pooled so they are
+    resampled together, which keeps the bootstrap honest for small cohorts
+    (for example nine mixed-outcome questions spread over seven cells).
+    """
+
+    groups: dict = {}
+    for index, record in enumerate(records):
+        groups.setdefault(key(record), []).append(index)
+    pooled: list[int] = []
+    for group_key in [group_key for group_key, indices in groups.items() if len(indices) == 1]:
+        pooled.extend(groups.pop(group_key))
+    if pooled:
+        groups[("__pooled_singletons__",)] = pooled
+    return groups
+
+
 def paired_subject_bootstrap(
     df,
     score_a: str,
@@ -79,9 +99,7 @@ def paired_subject_bootstrap(
 
     records = _subject_table(df, score_a, score_b, label, subject, list(strata))
     rng = np.random.default_rng(seed)
-    groups: dict[tuple, list[int]] = {}
-    for index, record in enumerate(records):
-        groups.setdefault(record["strata"], []).append(index)
+    groups = _resampling_groups(records, lambda record: record["strata"])
 
     deltas_auc, deltas_brier, auc_a, auc_b = [], [], [], []
     for _ in range(n_boot):
@@ -290,9 +308,7 @@ def calibration_guardrail_interval(
 
     records = _subject_table(df, score_a, score_b, label, subject, list(strata))
     rng = np.random.default_rng(seed + 1)
-    groups: dict[tuple, list[int]] = {}
-    for index, record in enumerate(records):
-        groups.setdefault(record["strata"], []).append(index)
+    groups = _resampling_groups(records, lambda record: record["strata"])
     values = []
     for _ in range(n_boot):
         sampled = []
@@ -354,16 +370,18 @@ def paired_within_question_bootstrap(
         record = per_subject.setdefault(subject_id, {"strata": strata_key, "deltas": []})
         record["deltas"].append(delta)
         eligible += 1
-    groups: dict[tuple, list] = {}
-    for subject_id, record in per_subject.items():
-        groups.setdefault(record["strata"], []).append(subject_id)
+    records = [
+        {"subject": subject_id, "strata": record["strata"], "deltas": record["deltas"]}
+        for subject_id, record in per_subject.items()
+    ]
+    groups = _resampling_groups(records, lambda record: record["strata"])
     rng = np.random.default_rng(seed + 2)
     values = []
     for _ in range(n_boot):
         sampled = []
-        for key, subject_ids in groups.items():
-            sampled.extend(rng.choice(subject_ids, size=len(subject_ids), replace=True))
-        deltas = np.concatenate([per_subject[subject_id]["deltas"] for subject_id in sampled])
+        for key, indices in groups.items():
+            sampled.extend(rng.choice(indices, size=len(indices), replace=True))
+        deltas = np.concatenate([records[index]["deltas"] for index in sampled])
         values.append(float(deltas.mean()))
     alpha = 1.0 - confidence
     return {
@@ -375,4 +393,5 @@ def paired_within_question_bootstrap(
         "eligible_questions": int(eligible),
         "n_questions": int(total_questions),
         "confidence": confidence,
+        "stratification": "strata with singleton cells pooled",
     }

@@ -332,7 +332,10 @@ def cmd_develop(args) -> dict:
             )
             if args.track.upper() == "B" and np.isfinite(variance["se_within"]):
                 within_power = within_question_power_table(
-                    variance["se_within"], n_development=variance["n_subjects"], seed=args.seed
+                    variance["se_within"],
+                    n_development=variance["n_subjects"],
+                    seed=args.seed,
+                    confidence=1.0 - 0.05 / len(PROTOCOL.secondary_family),
                 )
                 write_json(
                     paths["protocol"] / f"power_within__{slug}__trackB.json", within_power

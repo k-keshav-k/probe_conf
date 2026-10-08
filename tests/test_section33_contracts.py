@@ -22,6 +22,7 @@ from section33.analysis.evaluation import (
     decide_equivalence,
     decide_within_question,
     paired_subject_bootstrap,
+    paired_within_question_bootstrap,
 )
 from section33.analysis.interventions import (
     attenuate_topk,
@@ -436,6 +437,30 @@ def test_attenuate_removed_mass_accounts_for_partial_scaling():
     v_norms = w.norm(dim=0)
     result = attenuate_topk(s, w, v_norms, k=1, attenuation=0.5)
     assert result.removed_mass == pytest.approx(1.0)
+
+
+def test_within_question_bootstrap_pools_singleton_strata():
+    rows = []
+    for index, sign in enumerate([1, -1, 1, -1, 1]):
+        for draw in range(8):
+            label = 1 if draw < 4 else 0
+            a = (0.9 if draw < 4 else 0.1) if sign > 0 else (0.1 if draw < 4 else 0.9)
+            rows.append(
+                {
+                    "subject_id": f"s{index}",
+                    "question_id": f"q{index}",
+                    "label": label,
+                    "relation": "father",
+                    "stratum": str(index),
+                    "a": a,
+                    "b": 0.5,
+                }
+            )
+    frame = pd.DataFrame(rows)
+    result = paired_within_question_bootstrap(frame, "a", "b", n_boot=200, seed=0)
+    width = result["within_question_delta_interval"][1] - result["within_question_delta_interval"][0]
+    assert result["eligible_questions"] == 5
+    assert width > 0.0, "singleton strata must be pooled, not frozen"
 
 
 def test_calibration_method_selection():
