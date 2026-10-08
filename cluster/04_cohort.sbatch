@@ -58,7 +58,8 @@ if [ "${DEV_TEST:-0}" = "1" ]; then
     source /ext3/env.sh
     cd $REPO
     python -m section33.cli cohort --run $RUN_DIR --source $COHORT_SOURCE \
-        --seen $SEEN --per-relation 200 --train 300 --dev 150 --calibration 100 --test 183
+        --seen $SEEN --per-relation 200 --train 300 --dev 150 --calibration 100 --test 183 \
+        --mode ${MODE:-pilot}
   "
 else
   echo "== fresh cohort (plan section 4) =="
@@ -73,7 +74,7 @@ else
     cd $REPO
     python -m section33.cli cohort --run $RUN_DIR \
         --source $RUN_DIR/source/wikidata_cohort.csv \
-        --seen $SEEN --per-relation 1500
+        --seen $SEEN --per-relation 1500 --mode ${MODE:-pilot}
   "
 fi
 
