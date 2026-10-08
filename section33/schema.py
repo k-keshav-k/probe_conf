@@ -32,6 +32,7 @@ class AnswerRecord:
     answer_index: int
     generation_seed: int
     candidate_text: str
+    candidate_key: str
     label: Optional[int]
     label_policy_version: str
     reference_answers: list[str] = field(default_factory=list)
@@ -68,6 +69,7 @@ class FeatureRow:
     features: dict[str, float]
     prompt_token_hash: str
     candidate_token_ids: list[int]
+    candidate_key: str
     content_length: int
     feature_spec_version: str
     multiplicity: int = 1
@@ -117,6 +119,7 @@ class ConfidenceRecord:
     split: str
     track: str
     answer_index: int
+    candidate_key: str
     generation_seed: int
     prompt_version: str
     raw_text: str

@@ -15,6 +15,7 @@ Reference answers live in the labels interface only.  Feature rows come from
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -84,6 +85,40 @@ def is_refusal(text: str) -> bool:
 
 def model_slug(name: str) -> str:
     return name.replace("/", "__").replace("-", "_").lower()
+
+
+def candidate_key(model: str, revision: str, token_ids: list[int]) -> str:
+    """Stable candidate identity shared by the labels, confidence, and feature rows.
+
+    Includes the model and revision so rows from different runs can never merge,
+    and the exact token IDs so two candidates that decode to the same text stay
+    distinct.
+    """
+
+    return sha256_text(json.dumps([model, revision, list(token_ids)]))[:16]
+
+
+def _question_ids(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    return {row["question_id"] for row in read_jsonl(path)}
+
+
+def _drop_incomplete_questions(path: Path, keep: set[str]) -> int:
+    """Rewrite a jsonl file without rows for questions missing from any interface."""
+
+    if not path.exists():
+        return 0
+    rows = read_jsonl(path)
+    kept = [row for row in rows if row["question_id"] in keep]
+    if len(kept) == len(rows):
+        return 0
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w") as handle:
+        for row in kept:
+            handle.write(json.dumps(row) + "\n")
+    os.replace(tmp, path)
+    return len(rows) - len(kept)
 
 
 # ---------------------------------------------------------------------------
@@ -333,8 +368,10 @@ def collect_track_a(
         path.parent.mkdir(parents=True, exist_ok=True)
 
     done = set()
-    if settings.resume and labels_path.exists():
-        done = {row["question_id"] for row in read_jsonl(labels_path)}
+    if settings.resume:
+        done = _question_ids(labels_path) & _question_ids(conf_path) & _question_ids(feat_path)
+        for path in (labels_path, conf_path, feat_path):
+            _drop_incomplete_questions(path, done)
     todo = [q for q in questions if q.question_id not in done]
     if settings.max_questions:
         todo = todo[: settings.max_questions]
@@ -362,7 +399,8 @@ def collect_track_a(
         generated = [generated[i][0] for i in range(len(generated))]  # one sample each
 
         answer_rows, confidence_rows, feature_rows = [], [], []
-        for question, (answer_ids, answer_text, hit_limit) in zip(batch, generated):
+        for q_index, (question, (answer_ids, answer_text, hit_limit)) in enumerate(zip(batch, generated)):
+            key = candidate_key(loaded.name, loaded.revision, answer_ids)
             label = match_candidate(answer_text, question.reference_answers)
             answer_rows.append(
                 AnswerRecord(
@@ -370,7 +408,7 @@ def collect_track_a(
                     subject_id=question.subject_id, question_id=question.question_id,
                     split=question.split, track="A", answer_index=0,
                     generation_seed=settings.generation_seed + batch_index,
-                    candidate_text=answer_text, label=label,
+                    candidate_text=answer_text, candidate_key=key, label=label,
                     label_policy_version=label_policy_hash(),
                     reference_answers=list(question.reference_answers),
                     empty=len(answer_ids) == 0, truncated=hit_limit,
@@ -390,7 +428,7 @@ def collect_track_a(
             hidden_projector=projector,
             probability=True,
         )
-        for question, (answer_ids, answer_text, _), feature_dict in zip(batch, generated, feature_values):
+        for q_index, (question, (answer_ids, answer_text, _), feature_dict) in enumerate(zip(batch, generated, feature_values)):
             feature_rows.append(
                 FeatureRow(
                     model=loaded.name, revision=loaded.revision,
@@ -398,8 +436,9 @@ def collect_track_a(
                     split=question.split, track="A", answer_index=0,
                     generation_seed=settings.generation_seed + batch_index,
                     position="last_prompt", features=feature_dict,
-                    prompt_token_hash=sha256_text(json.dumps(prompts[0]))[:16],
+                    prompt_token_hash=sha256_text(json.dumps(prompts[q_index]))[:16],
                     candidate_token_ids=answer_ids,
+                    candidate_key=candidate_key(loaded.name, loaded.revision, answer_ids),
                     content_length=len(answer_ids),
                     feature_spec_version=FEATURE_SPEC_VERSION,
                 ).to_row()
@@ -409,7 +448,7 @@ def collect_track_a(
         conf_sequences, _ = _repeat_for_samples(conf_prompts, 1)
         conf_generated = _generate(loaded, conf_sequences, 8, do_sample=False,
                                    seed=settings.generation_seed + batch_index)
-        for question, entry in zip(batch, conf_generated):
+        for question, (answer_ids, _, _), entry in zip(batch, generated, conf_generated):
             text = entry[0][1]
             value, ok = parse_confidence(text)
             confidence_rows.append(
@@ -417,6 +456,7 @@ def collect_track_a(
                     model=loaded.name, revision=loaded.revision,
                     subject_id=question.subject_id, question_id=question.question_id,
                     split=question.split, track="A", answer_index=0,
+                    candidate_key=candidate_key(loaded.name, loaded.revision, answer_ids),
                     generation_seed=settings.generation_seed + batch_index,
                     prompt_version="section33_prompts_v1",
                     raw_text=text, value=value, parse_ok=ok,
@@ -450,8 +490,10 @@ def collect_track_b(
         path.parent.mkdir(parents=True, exist_ok=True)
 
     done = set()
-    if settings.resume and labels_path.exists():
-        done = {row["question_id"] for row in read_jsonl(labels_path)}
+    if settings.resume:
+        done = _question_ids(labels_path) & _question_ids(conf_path) & _question_ids(feat_path)
+        for path in (labels_path, conf_path, feat_path):
+            _drop_incomplete_questions(path, done)
     todo = [q for q in questions if q.question_id not in done]
     if settings.max_questions:
         todo = todo[: settings.max_questions]
@@ -515,6 +557,7 @@ def collect_track_b(
         conf_prompts, conf_meta = [], []
         for meta_index, ((q_index, item), feature_dict) in enumerate(zip(replay_meta, feature_values)):
             question = batch[q_index]
+            key = candidate_key(loaded.name, loaded.revision, item["ids"])
             label = match_candidate(item["text"], question.reference_answers)
             answer_rows.append(
                 AnswerRecord(
@@ -522,7 +565,7 @@ def collect_track_b(
                     subject_id=question.subject_id, question_id=question.question_id,
                     split=question.split, track="B", answer_index=meta_index,
                     generation_seed=settings.generation_seed + batch_index,
-                    candidate_text=item["text"], label=label,
+                    candidate_text=item["text"], candidate_key=key, label=label,
                     label_policy_version=label_policy_hash(),
                     reference_answers=list(question.reference_answers),
                     empty=len(item["ids"]) == 0, truncated=item["truncated"],
@@ -544,6 +587,7 @@ def collect_track_b(
                         position=position, features=features,
                         prompt_token_hash=sha256_text(json.dumps(prompts[q_index]))[:16],
                         candidate_token_ids=item["ids"],
+                        candidate_key=key,
                         content_length=len(item["ids"]),
                         feature_spec_version=FEATURE_SPEC_VERSION,
                         multiplicity=item["multiplicity"],
@@ -563,6 +607,7 @@ def collect_track_b(
                     model=loaded.name, revision=loaded.revision,
                     subject_id=question.subject_id, question_id=question.question_id,
                     split=question.split, track="B", answer_index=meta_index,
+                    candidate_key=candidate_key(loaded.name, loaded.revision, item["ids"]),
                     generation_seed=settings.generation_seed + batch_index,
                     prompt_version="section33_prompts_v1",
                     raw_text=text, value=value, parse_ok=ok,

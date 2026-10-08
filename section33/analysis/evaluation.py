@@ -69,6 +69,7 @@ def paired_subject_bootstrap(
     strata: tuple[str, ...] = ("relation", "stratum"),
     n_boot: int = PROTOCOL.bootstrap_samples,
     seed: int = PROTOCOL.bootstrap_seed,
+    confidence: float = 0.95,
 ) -> dict:
     """Paired bootstrap over subjects within strata.
 
@@ -102,7 +103,11 @@ def paired_subject_bootstrap(
 
     def interval(values):
         array = np.asarray(values)
-        return float(np.percentile(array, 2.5)), float(np.percentile(array, 97.5))
+        alpha = 1.0 - confidence
+        return (
+            float(np.percentile(array, 100 * alpha / 2)),
+            float(np.percentile(array, 100 * (1 - alpha / 2))),
+        )
 
     labels_all = df[label].to_numpy()
     a_all = df[score_a].to_numpy()
@@ -120,6 +125,7 @@ def paired_subject_bootstrap(
         "delta_brier_samples": [float(v) for v in deltas_brier],
         "bootstrap_seed": seed,
         "n_bootstrap": len(deltas_auc),
+        "confidence": confidence,
     }
 
 
@@ -267,12 +273,17 @@ def calibration_guardrail_interval(
     strata: tuple[str, ...] = ("relation", "stratum"),
     n_boot: int = PROTOCOL.bootstrap_samples,
     seed: int = PROTOCOL.bootstrap_seed,
+    confidence: float = 0.95,
 ) -> tuple[float, float]:
     """Paired interval of ``error(score_a) - error(score_b)``.
 
     Positive values mean that ``score_a`` (the first argument) is worse
     calibrated.  ``cmd_evaluate`` passes the augmented score first, so the
     interval is the increase that the primary guardrail checks.
+
+    Each bootstrap copy receives a fresh cluster id, so repeated draws of one
+    subject are treated as the independent copies they are rather than being
+    collapsed back into one cluster.
     """
 
     from ..probes.calibration import corrected_calibration_error
@@ -291,12 +302,16 @@ def calibration_guardrail_interval(
         a = np.concatenate([records[i]["a"] for i in sampled])
         b = np.concatenate([records[i]["b"] for i in sampled])
         subjects = np.concatenate(
-            [np.full(len(records[i]["labels"]), i) for i in sampled]
+            [np.full(len(records[i]["labels"]), copy) for copy, i in enumerate(sampled)]
         )
         error_a = corrected_calibration_error(a, labels, groups=subjects)
         error_b = corrected_calibration_error(b, labels, groups=subjects)
         values.append(error_a - error_b)
-    return float(np.percentile(values, 2.5)), float(np.percentile(values, 97.5))
+    alpha = 1.0 - confidence
+    return (
+        float(np.percentile(values, 100 * alpha / 2)),
+        float(np.percentile(values, 100 * (1 - alpha / 2))),
+    )
 
 
 def _pairwise_auroc(pos: np.ndarray, neg: np.ndarray) -> float:
@@ -316,6 +331,7 @@ def paired_within_question_bootstrap(
     strata: tuple[str, ...] = ("relation", "stratum"),
     n_boot: int = PROTOCOL.bootstrap_samples,
     seed: int = PROTOCOL.bootstrap_seed,
+    confidence: float = 0.95,
 ) -> dict:
     """Bootstrap over subjects of the mean per-question AUROC difference.
 
@@ -349,12 +365,14 @@ def paired_within_question_bootstrap(
             sampled.extend(rng.choice(subject_ids, size=len(subject_ids), replace=True))
         deltas = np.concatenate([per_subject[subject_id]["deltas"] for subject_id in sampled])
         values.append(float(deltas.mean()))
+    alpha = 1.0 - confidence
     return {
         "within_question_delta": float(np.mean(values)),
         "within_question_delta_interval": [
-            float(np.percentile(values, 2.5)),
-            float(np.percentile(values, 97.5)),
+            float(np.percentile(values, 100 * alpha / 2)),
+            float(np.percentile(values, 100 * (1 - alpha / 2))),
         ],
         "eligible_questions": int(eligible),
         "n_questions": int(total_questions),
+        "confidence": confidence,
     }

@@ -37,18 +37,33 @@ def _dedupe(frame: pd.DataFrame, subset: list[str]) -> pd.DataFrame:
     return work.drop_duplicates(subset=[c for c in subset if c in work.columns], keep="first")
 
 
+def _has_stable_keys(frame: pd.DataFrame) -> bool:
+    return (
+        "candidate_key" in frame.columns
+        and len(frame) > 0
+        and frame["candidate_key"].notna().all()
+        and (frame["candidate_key"].astype(str) != "").all()
+    )
+
+
 def load_split(
     paths: dict[str, Path],
     model_slug: str,
     track: str,
     splits: tuple[str, ...] = ("train", "dev", "calibration", "test"),
+    expected_samples: int | None = None,
 ) -> pd.DataFrame:
     """Join labels, features, and confidence for one track and model.
 
     Sharded collections write one file group per shard.  All groups that match
-    ``track{track}_*__{model_slug}*`` are merged.  Track B keys on the candidate
-    itself, because ``answer_index`` is batch-local and can differ when the same
-    question was collected under a different shard tag.
+    ``track{track}_*__{model_slug}*`` are merged.  New collections carry a
+    stable ``candidate_key`` (model, revision, and exact token IDs) in every
+    interface; legacy rows without keys fall back to the run-local
+    ``answer_index``.  The join is validated: unmatched rows and duplicate keys
+    raise instead of silently dropping samples.
+
+    ``expected_samples`` (Track B) rejects any completed question that does not
+    retain exactly that many draws after the join.
     """
 
     def _glob_read(folder: str, pattern: str) -> pd.DataFrame:
@@ -63,32 +78,52 @@ def load_split(
     confidence = _glob_read(paths["labels"], f"track{track}_confidence__{model_slug}*.jsonl")
     if labels.empty or features.empty:
         return pd.DataFrame()
-    if track.upper() == "B":
-        labels = _dedupe(labels, ["question_id", "track", "candidate_text"])
-        features = _dedupe(features, ["question_id", "track", "candidate_token_ids", "position"])
-    else:
-        labels = _dedupe(labels, ["question_id", "track", "answer_index"])
-        features = _dedupe(features, ["question_id", "track", "answer_index", "position"])
-    confidence = _dedupe(confidence, ["question_id", "track", "answer_index"])
+
+    stable = _has_stable_keys(labels) and _has_stable_keys(features)
+    key_columns = ["question_id", "track", "candidate_key"] if stable else ["question_id", "track", "answer_index"]
+    labels = _dedupe(labels, key_columns)
+    features = _dedupe(features, key_columns + ["position"])
+
     if track.upper() == "A":
         feature_primary = features[features["position"] == "last_prompt"]
     else:
         feature_primary = features[features["position"] == "answer_last_content"]
     feature_columns = [c for c in feature_primary.columns if c.startswith("f__") or c in
                        ("subject_id", "question_id", "split", "track", "answer_index", "generation_seed",
-                        "position", "candidate_token_ids", "content_length", "multiplicity")]
+                        "position", "candidate_token_ids", "candidate_key", "content_length", "multiplicity")]
     merged = labels.merge(
         feature_primary[feature_columns],
-        on=["subject_id", "question_id", "split", "track", "answer_index"],
-        how="inner",
+        on=key_columns,
+        how="left",
         suffixes=("", "_feat"),
+        indicator=True,
     )
+    unmatched = int((merged["_merge"] == "left_only").sum())
+    if unmatched:
+        raise ValueError(
+            f"{unmatched} {track} label rows have no matching feature row; "
+            "check the candidate keys and collection completeness"
+        )
+    merged = merged.drop(columns="_merge")
+    duplicates = int(merged.duplicated(subset=key_columns).sum())
+    if duplicates:
+        raise ValueError(f"{duplicates} duplicate rows after the label/feature join")
+
+    orphan = feature_primary[key_columns].merge(
+        labels[key_columns].drop_duplicates(), on=key_columns, how="left", indicator=True
+    )
+    n_orphan = int((orphan["_merge"] == "left_only").sum())
+    if n_orphan:
+        raise ValueError(f"{n_orphan} {track} feature rows have no matching label row")
+
     if not confidence.empty:
+        conf_stable = stable and _has_stable_keys(confidence)
+        conf_keys = key_columns if conf_stable else ["question_id", "track", "answer_index"]
         merged = merged.merge(
-            confidence[["question_id", "track", "answer_index", "value", "parse_ok", "raw_text"]].rename(
+            confidence[conf_keys + ["value", "parse_ok", "raw_text"]].rename(
                 columns={"value": "conf", "parse_ok": "conf_parse_ok", "raw_text": "conf_raw"}
             ),
-            on=["question_id", "track", "answer_index"],
+            on=conf_keys,
             how="left",
         )
     else:
@@ -99,26 +134,45 @@ def load_split(
     for column in REFERENCE_COLUMNS:
         if column in merged.columns:
             merged = merged.drop(columns=[column])
+
+    if track.upper() == "B" and expected_samples:
+        sums = merged.groupby("question_id")["multiplicity"].sum()
+        incomplete = sums[sums != expected_samples]
+        if len(incomplete):
+            raise ValueError(
+                f"{len(incomplete)} Track B questions do not retain {expected_samples} draws: "
+                f"{incomplete.head(10).to_dict()}"
+            )
     return merged
 
 
-def metadata_features(frame: pd.DataFrame) -> pd.DataFrame:
+TRACK_A_METADATA = ("relation", "stratum", "popularity", "prompt_tokens")
+TRACK_B_METADATA = TRACK_A_METADATA + ("content_length",)
+
+
+def metadata_features(frame: pd.DataFrame, track: str | None = None) -> pd.DataFrame:
     """Difficulty block D: relation one-hot, popularity, lengths, missingness.
 
+    ``track="A"`` is the before-answer task, so the block is restricted to
+    information available before generation: relation, stratum, popularity, and
+    prompt length.  Generated-answer length and confidence missingness are
+    after-generation information and are excluded.  Track B is the after-answer
+    task and may use ``content_length``.
+
     The stated confidence score is deliberately excluded.  It belongs to the
-    separate V comparator (plan section 6.1: B = D + P + H).  Only the
-    missingness indicators for confidence are kept here.
+    separate V comparator (plan section 6.1: B = D + P + H).
     """
 
+    allow = TRACK_B_METADATA if (track or "B").upper() == "B" else TRACK_A_METADATA
     parts = []
     if "relation" in frame.columns:
         parts.append(pd.get_dummies(frame["relation"], prefix="rel").astype(float))
     if "stratum" in frame.columns:
         parts.append(pd.get_dummies(frame["stratum"], prefix="stratum").astype(float))
     for column in ("popularity", "content_length", "prompt_tokens"):
-        if column in frame.columns:
+        if column in allow and column in frame.columns:
             parts.append(frame[[column]].astype(float).rename(columns={column: f"meta_{column}"}))
-    if "conf" in frame.columns:
+    if (track or "B").upper() == "B" and "conf" in frame.columns:
         parts.append(
             pd.DataFrame(
                 {

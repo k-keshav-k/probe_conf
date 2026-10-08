@@ -36,7 +36,12 @@ from .analysis.evaluation import (
     paired_within_question_bootstrap,
 )
 from .analysis.difficulty import within_question_auroc
-from .analysis.power import development_variance, power_table
+from .analysis.power import (
+    development_variance,
+    paired_development_distribution,
+    power_table,
+    within_question_power_table,
+)
 from .config import PROTOCOL, run_paths, write_protocol
 from .data.cohort import (
     CohortQuestion,
@@ -48,7 +53,14 @@ from .datasets import expand_by_multiplicity, load_split, metadata_features
 from .models.collect import CollectSettings, collect
 from .models.loader import load_model_and_tokenizer
 from .probes.calibration import fit_calibrator
-from .probes.pipeline import assemble_blocks, fit_probe, select_columns, standard_specs
+from .probes.pipeline import (
+    assemble_blocks,
+    fit_probe,
+    missing_blocks,
+    select_columns,
+    spec_is_usable,
+    standard_specs,
+)
 from .utils import ensure_dirs, log, set_seed, sha256_file, sha256_text, write_json
 
 
@@ -219,8 +231,8 @@ def cmd_collect(args) -> dict:
 # ---------------------------------------------------------------------------
 # development: feature selection and power simulation
 # ---------------------------------------------------------------------------
-def _add_metadata_columns(frame: pd.DataFrame) -> pd.DataFrame:
-    meta = metadata_features(frame)
+def _add_metadata_columns(frame: pd.DataFrame, track: str) -> pd.DataFrame:
+    meta = metadata_features(frame, track=track)
     for column in meta.columns:
         frame[f"f__meta__{column}"] = meta[column].to_numpy()
     if "conf" in frame.columns:
@@ -229,44 +241,42 @@ def _add_metadata_columns(frame: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
-def _subject_deltas(dev: pd.DataFrame, score_a: str, score_b: str, label: str = "label") -> tuple[np.ndarray, np.ndarray]:
-    """Per-subject paired differences of AUROC contributions and Brier scores.
+def _expand_samples(frame: pd.DataFrame) -> pd.DataFrame:
+    """Make every sampled answer count once before any fitting or scoring.
 
-    Only subjects with both label classes contribute.  The AUC delta is
-    undefined for a single-class subject, and the power simulation needs the
-    two deltas to stay paired, so those subjects are skipped entirely.
+    Training, validation, calibration, development scoring, and evaluation all
+    see the same eight-draw population.  The weight column is reset to one so a
+    later expansion cannot double-count the rows.
     """
 
-    auc_deltas, brier_deltas = [], []
-    for subject, block in dev.groupby("subject_id"):
-        y = block[label].to_numpy()
-        a = block[score_a].to_numpy()
-        b = block[score_b].to_numpy()
-        if len(np.unique(y)) < 2:
-            continue
-        auc_deltas.append(roc_auc_score(y, a) - roc_auc_score(y, b))
-        brier_deltas.append(brier_score_loss(y, np.clip(b, 0, 1)) - brier_score_loss(y, np.clip(a, 0, 1)))
-    return np.asarray(auc_deltas), np.asarray(brier_deltas)
+    frame = expand_by_multiplicity(frame)
+    frame["multiplicity"] = 1
+    return frame
 
 
 def cmd_develop(args) -> dict:
     paths = run_paths(args.run)
     ensure_dirs(paths)
     slug = _slug(args.model)
-    frame = load_split(paths, slug, args.track, splits=("train", "dev"))
+    frame = load_split(
+        paths, slug, args.track, splits=("train", "dev"),
+        expected_samples=PROTOCOL.track_b_samples if args.track.upper() == "B" else None,
+    )
     if frame.empty:
         raise SystemExit("no development data; run collect for train and dev first")
-    frame = _add_metadata_columns(frame)
+    frame = _add_metadata_columns(frame, args.track)
+    frame = _expand_samples(frame)
     train = frame[frame["split"] == "train"]
     dev = frame[frame["split"] == "dev"]
-    specs = standard_specs()
-    # Keep only the specs that have matching features for this track and frame
-    # (for example, last-prompt hidden specs on an answer-position-only frame).
+    # Keep only specs whose blocks all have matching features for this track and
+    # frame.  Empty blocks are rejected rather than fitted as constants.
     specs = {
         name: spec
-        for name, spec in specs.items()
-        if any(select_columns(frame, block) for block in spec.blocks)
+        for name, spec in standard_specs().items()
+        if spec_is_usable(frame, spec)
     }
+    if not specs:
+        raise SystemExit("no probe specification has matching features; check the collection")
     results = {}
     predictions = {}
     for name, spec in specs.items():
@@ -278,7 +288,7 @@ def cmd_develop(args) -> dict:
             "dev_brier": float(brier_score_loss(dev["label"], np.clip(dev_predictions, 0, 1))),
             "dev_auroc": float(roc_auc_score(dev["label"], dev_predictions))
             if len(dev["label"].unique()) > 1 else None,
-            "n_columns": int(sum(len(assemble_blocks(dev, spec)[block.name][0]) for block in spec.blocks)),
+            "n_columns": int(sum(assemble_blocks(dev, spec)[block.name].shape[1] for block in spec.blocks)),
         }
     selection = {
         "model": args.model,
@@ -294,23 +304,31 @@ def cmd_develop(args) -> dict:
         dev = dev.copy()
         dev["score_B"] = predictions[baseline_key]
         dev["score_B_plus_M"] = predictions[comparison_key]
-        auc_deltas, brier_deltas = _subject_deltas(dev, "score_B_plus_M", "score_B")
-        variance = development_variance(auc_deltas, brier_deltas)
-        if not (np.isfinite(variance["sd_auc"]) and np.isfinite(variance["sd_brier"])):
-            log(
-                "development variance is not estimable (no mixed-label subjects "
-                "with both classes); skipping the power table"
-            )
+        distribution = paired_development_distribution(
+            dev, "score_B_plus_M", "score_B", seed=args.seed
+        )
+        variance = development_variance(distribution)
+        if not (np.isfinite(variance["se_auc"]) and np.isfinite(variance["se_brier"])):
+            log("development variance is not estimable; skipping the power table")
         else:
             correlation = variance["corr"] if np.isfinite(variance["corr"]) else 0.8
             power = power_table(
-                variance["sd_auc"], variance["sd_brier"], correlation=correlation
+                variance["se_auc"], variance["se_brier"],
+                n_development=variance["n_subjects"],
+                correlation=correlation, seed=args.seed,
             )
             write_json(paths["protocol"] / f"power__{slug}__track{args.track}.json", power)
             log(
-                f"development variance: sd_auc={variance['sd_auc']:.4f}, "
-                f"sd_brier={variance['sd_brier']:.4f}"
+                f"development variance: se_auc={variance['se_auc']:.4f}, "
+                f"se_brier={variance['se_brier']:.4f}, n={variance['n_subjects']}"
             )
+            if args.track.upper() == "B" and np.isfinite(variance["se_within"]):
+                within_power = within_question_power_table(
+                    variance["se_within"], n_development=variance["n_subjects"], seed=args.seed
+                )
+                write_json(
+                    paths["protocol"] / f"power_within__{slug}__trackB.json", within_power
+                )
     return selection
 
 
@@ -328,10 +346,14 @@ def cmd_evaluate(args) -> dict:
     ensure_dirs(paths)
     slug = _slug(args.model)
     track = args.track.upper()
-    frame = load_split(paths, slug, track, splits=("train", "calibration", "test"))
+    frame = load_split(
+        paths, slug, track, splits=("train", "calibration", "test"),
+        expected_samples=PROTOCOL.track_b_samples if track == "B" else None,
+    )
     if frame.empty:
         raise SystemExit("no evaluation data; run collect first")
-    frame = _add_metadata_columns(frame)
+    frame = _add_metadata_columns(frame, track)
+    frame = _expand_samples(frame)
     specs = standard_specs()
 
     base = "B_after" if track == "B" else "B"
@@ -341,6 +363,21 @@ def cmd_evaluate(args) -> dict:
     mlp = "M_all_after" if track == "B" else "M_all"
     v_name = "V_after" if track == "B" else "V"
     p_name = "P_after" if track == "B" else "P"
+    control_capacity = "H_M_256_256_after" if track == "B" else "H_M_256_256"
+    control_hidden = "H_768_after" if track == "B" else "H_768"
+    control_nonlinear = "H_nonlinear_after" if track == "B" else "H_nonlinear"
+    method_names = list(dict.fromkeys((
+        base, augment, hidden, hidden_plus, mlp, v_name, p_name,
+        control_capacity, control_hidden, control_nonlinear,
+    )))
+
+    missing = {
+        name: missing_blocks(frame, specs[name])
+        for name in method_names
+        if not spec_is_usable(frame, specs[name])
+    }
+    if missing:
+        raise SystemExit(f"required probes have no matching features: {missing}")
 
     train = frame[frame["split"] == "train"]
     calibration = frame[frame["split"] == "calibration"]
@@ -349,8 +386,15 @@ def cmd_evaluate(args) -> dict:
         raise SystemExit("train, calibration, and test splits must all be non-empty")
 
     outputs = {}
-    for name in dict.fromkeys((base, augment, hidden, hidden_plus, mlp, v_name, p_name)):
+    feature_manifest = {}
+    for name in method_names:
         spec = specs[name]
+        blocks = assemble_blocks(train, spec)
+        feature_manifest[name] = {
+            "classifier": spec.classifier,
+            "dimensions": {block: int(matrix.shape[1]) for block, matrix in blocks.items()},
+            "total_columns": int(sum(matrix.shape[1] for matrix in blocks.values())),
+        }
         probe, best = fit_probe(
             train, train["label"].to_numpy(), train["subject_id"].to_numpy(), spec, seed=args.seed
         )
@@ -368,13 +412,16 @@ def cmd_evaluate(args) -> dict:
         }
         log(f"{name}: test AUROC {outputs[name]['test_auroc']}")
 
-    # Every sampled answer counts once (plan section 5.2).
-    metric_frame = expand_by_multiplicity(test) if track == "B" else test
+    # The frame was expanded on load, so per-method and paired metrics use the
+    # same eight-draw population (plan section 5.2).
+    metric_frame = test
+    family_confidence = 1.0 - 0.05 / len(PROTOCOL.secondary_family)
 
-    def paired(a: str, b: str) -> dict:
+    def paired(a: str, b: str, confidence: float = 0.95) -> dict:
         return paired_subject_bootstrap(
             metric_frame, f"cal_{a}", f"cal_{b}", "label",
             subject="subject_id", strata=("relation", "stratum"), seed=args.seed,
+            confidence=confidence,
         )
 
     primary = paired(augment, base)
@@ -393,7 +440,7 @@ def cmd_evaluate(args) -> dict:
     secondary = {}
     raw_p_values = []
     for key, (a, b) in secondary_specs.items():
-        result = paired(a, b)
+        result = paired(a, b, confidence=family_confidence)
         p_value = bootstrap_p_value(result["delta_auc_samples"])
         secondary[key] = {**_strip_samples(result), "comparison": a, "baseline": b, "p_auc": p_value}
         raw_p_values.append(p_value)
@@ -409,6 +456,7 @@ def cmd_evaluate(args) -> dict:
             metric_frame, f"cal_{augment}", f"cal_{base}", "label",
             question="question_id", subject="subject_id",
             strata=("relation", "stratum"), seed=args.seed,
+            confidence=family_confidence,
         )
         brier_increase = (
             -primary["delta_brier_interval"][1],
@@ -429,8 +477,11 @@ def cmd_evaluate(args) -> dict:
         "decision": decision.to_row(),
         "secondary": secondary,
         "holm_family": list(secondary_specs),
+        "claim_family": list(PROTOCOL.secondary_family),
+        "secondary_confidence": family_confidence,
         "within_question": within,
         "methods": outputs,
+        "feature_manifest": feature_manifest,
     }
     write_json(paths["evaluation"] / f"decision__{slug}__track{track}.json", payload)
     test.to_parquet(

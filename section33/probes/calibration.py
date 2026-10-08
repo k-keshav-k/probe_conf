@@ -132,12 +132,23 @@ def corrected_calibration_error(
         if groups is None:
             variance_of_mean = residual.var(ddof=1) / n if n > 1 else 0.0
         else:
+            # Design-aware variance of the observation-weighted bin mean.  The
+            # cluster totals are centered by the cluster's expected contribution
+            # (n_c * mean_r), so clusters of different sizes are handled
+            # correctly.  With one observation per cluster this reduces to the
+            # unweighted variance of the cluster means.
             cluster_ids = np.asarray(groups)[mask]
-            cluster_means = [residual[cluster_ids == c].mean() for c in np.unique(cluster_ids)]
-            n_clusters = len(cluster_means)
-            variance_of_mean = (
-                float(np.var(cluster_means, ddof=1)) / n_clusters if n_clusters > 1 else 0.0
-            )
+            unique = np.unique(cluster_ids)
+            n_clusters = len(unique)
+            if n_clusters > 1:
+                totals = np.array([residual[cluster_ids == c].sum() for c in unique])
+                sizes = np.array([float((cluster_ids == c).sum()) for c in unique])
+                centered = totals - sizes * mean_r
+                variance_of_mean = float(
+                    np.sum(centered**2) / (n**2) * (n_clusters / (n_clusters - 1))
+                )
+            else:
+                variance_of_mean = 0.0
         # Negative contributions are kept: the plan requires comparing methods
         # without clipping (section 9.2).
         total += (n / len(scores)) * (mean_r**2 - variance_of_mean)

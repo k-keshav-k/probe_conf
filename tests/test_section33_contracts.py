@@ -6,6 +6,8 @@ Run with:  .venv/bin/python -m pytest tests/test_section33_contracts.py -q
 from __future__ import annotations
 
 import json
+import tempfile
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -27,11 +29,14 @@ from section33.analysis.interventions import (
     random_matched,
     shuffle_within_strata,
 )
-from section33.analysis.power import development_variance
-from section33.cli import _subject_deltas
+from section33.analysis.power import (
+    development_variance,
+    paired_development_distribution,
+    simulate_paired_decision,
+)
 from section33.data.cohort import assign_popularity_strata, assign_splits, exclude_seen, verify_disjoint
 from section33.data.labels import match_candidate, normalize, token_match
-from section33.datasets import expand_by_multiplicity, metadata_features
+from section33.datasets import expand_by_multiplicity, load_split, metadata_features
 from section33.features import families as fam
 from section33.features import mlp_math as mm
 from section33.features.hidden import DEFAULT_PROJ_LAYERS, HiddenProjector, proj_layers
@@ -39,7 +44,7 @@ from section33.features.probability import sequence_features
 from section33.models.collect import ModelWeights, extract_features_for_sequences
 from section33.models.contract import MLPCapture, mlp_modules, verify_mlp_contract
 from section33.probes.calibration import fit_calibrator
-from section33.probes.pipeline import Block, ProbeSpec, fit_probe, standard_specs
+from section33.probes.pipeline import Block, ProbeSpec, fit_probe, select_columns, standard_specs
 from section33.smoke import _StubLoaded, _StubTokenizer, make_tiny_model
 
 
@@ -199,29 +204,148 @@ def test_preprocessing_fitted_inside_folds_only():
     assert abs(full_mean - scaler_mean) > 0.1, "the held-out outlier must not influence the scaler"
 
 
-def test_subject_deltas_stay_paired():
+# ---------------------------------------------------------------------------
+# Review repairs: feature selection, boundaries, joins, multiplicity, power
+# ---------------------------------------------------------------------------
+def test_probability_block_matches_position_suffix():
+    specs = standard_specs()
     frame = pd.DataFrame(
         {
-            "subject_id": ["a", "a", "b", "b", "c"],
-            "label": [1, 0, 1, 1, 0],
-            "score_a": [0.9, 0.2, 0.8, 0.7, 0.3],
-            "score_b": [0.4, 0.6, 0.5, 0.9, 0.7],
+            "f__prob__top1__last_prompt": [0.1],
+            "f__prob__entropy__answer_last_content": [0.2],
+            "f__hiddenproj__post__last_prompt__l0__k0": [0.3],
         }
     )
-    auc_deltas, brier_deltas = _subject_deltas(frame, "score_a", "score_b")
-    assert len(auc_deltas) == len(brier_deltas) == 1, "only subject 'a' has both classes"
+    assert select_columns(frame, specs["P"].blocks[0]) == ["f__prob__top1__last_prompt"]
+    assert select_columns(frame, specs["P_after"].blocks[0]) == ["f__prob__entropy__answer_last_content"]
 
 
-def test_development_variance_is_per_subject_sd():
-    auc = np.array([0.10, -0.20, 0.30, 0.05])
-    brier = np.array([0.010, -0.020, 0.030, 0.005])
-    variance = development_variance(auc, brier)
-    assert variance["n_subjects"] == 4
-    assert abs(variance["sd_auc"] - np.std(auc, ddof=1)) < 1e-12
-    assert abs(variance["sd_brier"] - np.std(brier, ddof=1)) < 1e-12
-    assert np.isfinite(variance["corr"])
-    not_estimable = development_variance(np.array([0.1]), np.array([0.01]))
-    assert not np.isfinite(not_estimable["sd_auc"])
+def test_metadata_features_respect_track_boundary():
+    frame = pd.DataFrame(
+        {
+            "track": ["A", "A"],
+            "relation": ["father", "father"],
+            "content_length": [1, 7],
+            "popularity": [10.0, 10.0],
+            "prompt_tokens": [5, 5],
+        }
+    )
+    before = metadata_features(frame, track="A")
+    assert "meta_content_length" not in before.columns
+    assert before.loc[0].equals(before.loc[1]), "answer length must not change Track A inputs"
+    after = metadata_features(frame, track="B")
+    assert after["meta_content_length"].tolist() == [1.0, 7.0]
+
+
+def test_duplicate_decoded_text_keeps_all_samples(tmp_path):
+    common = dict(subject_id="s", question_id="q", split="test", track="B", multiplicity=4)
+    labels = [
+        {**common, "answer_index": 0, "candidate_text": "same", "label": 1},
+        {**common, "answer_index": 1, "candidate_text": "same", "label": 0},
+    ]
+    features = [
+        {
+            **common,
+            "answer_index": i,
+            "candidate_token_ids": [i + 10],
+            "position": "answer_last_content",
+            "content_length": 1,
+            "f__hiddenproj__post__answer_last_content__l0__k0": float(i),
+        }
+        for i in range(2)
+    ]
+    paths = {"labels": tmp_path / "labels", "features": tmp_path / "features"}
+    for path in paths.values():
+        path.mkdir()
+    (paths["labels"] / "trackB_answers__stub.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in labels)
+    )
+    (paths["features"] / "trackB_features__stub.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in features)
+    )
+    joined = load_split(paths, "stub", "B", expected_samples=8)
+    assert len(joined) == 2
+    assert int(joined["multiplicity"].sum()) == 8
+
+
+def test_join_rejects_unmatched_rows(tmp_path):
+    common = dict(subject_id="s", question_id="q", split="test", track="B", multiplicity=4)
+    labels = [
+        {**common, "answer_index": 0, "candidate_text": "same", "label": 1},
+        {**common, "answer_index": 1, "candidate_text": "same", "label": 0},
+    ]
+    features = [
+        {
+            **common,
+            "answer_index": 0,
+            "candidate_token_ids": [10],
+            "position": "answer_last_content",
+            "content_length": 1,
+            "f__hiddenproj__post__answer_last_content__l0__k0": 0.0,
+        }
+    ]
+    paths = {"labels": tmp_path / "labels", "features": tmp_path / "features"}
+    for path in paths.values():
+        path.mkdir()
+    (paths["labels"] / "trackB_answers__stub.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in labels)
+    )
+    (paths["features"] / "trackB_features__stub.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in features)
+    )
+    with pytest.raises(ValueError, match="no matching feature"):
+        load_split(paths, "stub", "B")
+
+
+def test_paired_development_distribution_works_with_one_answer_subjects():
+    rng = np.random.default_rng(0)
+    n = 40
+    frame = pd.DataFrame(
+        {
+            "subject_id": [f"s{i}" for i in range(n)],
+            "question_id": [f"q{i}" for i in range(n)],
+            "label": rng.integers(0, 2, n),
+            "score_a": rng.random(n),
+            "score_b": rng.random(n),
+            "relation": "father",
+            "stratum": "0",
+        }
+    )
+    distribution = paired_development_distribution(frame, "score_a", "score_b", n_boot=50, seed=0)
+    assert distribution["n_subjects"] == n
+    assert len(distribution["delta_auc"]) >= 2
+    variance = development_variance(distribution)
+    assert np.isfinite(variance["se_auc"]) and np.isfinite(variance["se_brier"])
+    assert variance["n_subjects"] == n
+    too_small = paired_development_distribution(
+        frame.iloc[:1], "score_a", "score_b", n_boot=10, seed=0
+    )
+    assert not np.isfinite(development_variance(too_small)["se_auc"])
+
+
+def test_power_scales_with_sample_size():
+    # The earlier simulator drew population effects and reported <50% detection
+    # at one million subjects for a large true effect.
+    large = simulate_paired_decision(
+        1_000_000, 0.040, 0.010, 1e-4, 1e-4, n_sim=2000, seed=0, calibration_ok_probability=1.0
+    )
+    assert large["p_useful_improvement_supported"] > 0.95
+    null = simulate_paired_decision(
+        1_000_000, 0.0, 0.0, 1e-4, 1e-4, n_sim=2000, seed=0, calibration_ok_probability=1.0
+    )
+    assert null["p_useful_improvement_supported"] < 0.01
+    # A strongly negative effect with a precise Brier interval is classified by
+    # the registered rules as "ruled out" rather than "harm".
+    harmful = simulate_paired_decision(
+        1_000_000, -0.100, -0.050, 1e-4, 1e-4, n_sim=2000, seed=0, calibration_ok_probability=1.0
+    )
+    assert harmful["p_useful_improvement_ruled_out"] > 0.95
+    # Harm fires when the AUROC interval is below zero but the Brier interval
+    # still crosses the useful margin.
+    harm = simulate_paired_decision(
+        1_000_000, -0.100, 0.020, 1e-4, 2e-2, n_sim=2000, seed=0, calibration_ok_probability=1.0
+    )
+    assert harm["p_harm_supported"] > 0.90
 
 
 def test_calibration_method_selection():
@@ -410,56 +534,87 @@ def test_expand_by_multiplicity():
     assert len(expand_by_multiplicity(pd.DataFrame({"value": [1]}))) == 1
 
 
-def test_load_split_merges_shards_without_track_b_duplicates(tmp_path):
+def _stub_candidate_rows(question_id, candidates):
+    """Build label/feature rows for one Track B question.
+
+    ``candidates`` is a list of ``(candidate_key, token_ids, text, multiplicity)``.
+    """
+
+    labels, features = [], []
+    for answer_index, (key, tokens, text, multiplicity) in enumerate(candidates):
+        common = {
+            "model": "stub", "revision": "stub", "subject_id": "s1",
+            "question_id": question_id, "split": "dev", "track": "B",
+            "answer_index": answer_index, "generation_seed": 0,
+        }
+        labels.append(
+            {
+                **common, "candidate_key": key, "candidate_text": text, "label": 1,
+                "label_policy_version": "test", "reference_answers": ["Fred"],
+                "empty": False, "truncated": False, "refusal": False, "exception": None,
+                "multiplicity": multiplicity, "relation": "father",
+                "popularity": 1.0, "stratum": "0",
+            }
+        )
+        features.append(
+            {
+                **common, "candidate_key": key, "candidate_token_ids": tokens,
+                "position": "answer_last_content",
+                "f__prob__top1__answer_last_content": 0.5,
+                "prompt_token_hash": "x", "content_length": len(tokens),
+                "feature_spec_version": "test", "multiplicity": multiplicity,
+            }
+        )
+    return labels, features
+
+
+def test_load_split_keeps_distinct_candidates_with_same_text(tmp_path):
     from section33.config import run_paths
-    from section33.datasets import load_split
 
     paths = run_paths(tmp_path)
     for folder in ("labels", "features"):
         (tmp_path / folder).mkdir()
 
-    def label_row(answer_index, candidate):
-        return {
-            "model": "stub", "revision": "stub", "subject_id": "s1", "question_id": "q1",
-            "split": "dev", "track": "B", "answer_index": answer_index, "generation_seed": 0,
-            "candidate_text": candidate, "label": 1, "label_policy_version": "test",
-            "reference_answers": ["Fred"], "empty": False, "truncated": False,
-            "refusal": False, "exception": None, "multiplicity": 2,
-            "relation": "father", "popularity": 1.0, "stratum": "0",
-        }
+    labels, features = [], []
+    for question, candidates in {
+        "q_same_key": [("k1", [1, 2], "Fred", 8)],
+        "q_same_text": [("k2a", [1, 2], "same", 4), ("k2b", [3, 4], "same", 4)],
+    }.items():
+        block_labels, block_features = _stub_candidate_rows(question, candidates)
+        labels += block_labels
+        features += block_features
+    (tmp_path / "labels" / "trackB_answers__stub__shard0of1.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in labels)
+    )
+    (tmp_path / "features" / "trackB_features__stub__shard0of1.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in features)
+    )
 
-    def feature_row(answer_index, position="answer_last_content"):
-        return {
-            "model": "stub", "revision": "stub", "subject_id": "s1", "question_id": "q1",
-            "split": "dev", "track": "B", "answer_index": answer_index, "generation_seed": 0,
-            "position": position,
-            "f__prob__top1__answer_last_content": 0.5,
-            "prompt_token_hash": "x", "candidate_token_ids": [1, 2], "content_length": 2,
-            "feature_spec_version": "test", "multiplicity": 2,
-        }
+    frame = load_split(paths, "stub", "B", expected_samples=8)
+    assert len(frame) == 3, "distinct token sequences must not merge on decoded text"
+    same_text = frame[frame["question_id"] == "q_same_text"]
+    assert same_text["candidate_key"].nunique() == 2
+    assert int(same_text["multiplicity"].sum()) == 8
 
-    def confidence_row(answer_index):
-        return {
-            "model": "stub", "revision": "stub", "subject_id": "s1", "question_id": "q1",
-            "split": "dev", "track": "B", "answer_index": answer_index, "generation_seed": 0,
-            "prompt_version": "test", "raw_text": "90", "value": 90.0, "parse_ok": True,
-        }
 
-    # The same candidate under two shard tags with different batch-local indices.
-    for tag, answer_index in (("shard0of2", 0), ("shard1of2", 9)):
+def test_load_split_merges_same_candidate_across_shards(tmp_path):
+    from section33.config import run_paths
+
+    paths = run_paths(tmp_path)
+    for folder in ("labels", "features"):
+        (tmp_path / folder).mkdir()
+
+    for tag in ("shard0of2", "shard1of2"):
+        labels, features = _stub_candidate_rows("q1", [("k1", [1, 2], "Fred", 2)])
         (tmp_path / "labels" / f"trackB_answers__stub__{tag}.jsonl").write_text(
-            json.dumps(label_row(answer_index, "Fred")) + "\n"
-        )
-        (tmp_path / "labels" / f"trackB_confidence__stub__{tag}.jsonl").write_text(
-            json.dumps(confidence_row(answer_index)) + "\n"
+            json.dumps(labels[0]) + "\n"
         )
         (tmp_path / "features" / f"trackB_features__stub__{tag}.jsonl").write_text(
-            json.dumps(feature_row(answer_index)) + "\n"
+            json.dumps(features[0]) + "\n"
         )
 
     frame = load_split(paths, "stub", "B")
     assert len(frame) == 1
-    assert frame["candidate_text"].iloc[0] == "Fred"
     assert int(frame["multiplicity"].iloc[0]) == 2
 
 
@@ -505,7 +660,7 @@ def test_cmd_evaluate_end_to_end(tmp_path, monkeypatch):
         for candidate in range(4):
             label = int(ability + rng.normal() * 0.8 > 0)
             confidence = float(np.clip(50 + 40 * ability + rng.normal() * 10, 0, 100))
-            multiplicity = 2 if candidate == 0 else 1
+            multiplicity = 5 if candidate == 0 else 1
             common = {
                 "model": "stub", "revision": "stub", "subject_id": subject,
                 "question_id": question, "split": split, "track": "B",
@@ -535,6 +690,9 @@ def test_cmd_evaluate_end_to_end(tmp_path, monkeypatch):
                     "f__conf__stated": confidence,
                     "f__hiddenproj__post__answer_last_content__l0__k0": ability + rng.normal() * 0.3,
                     "f__contribution_concentration__e_top1_mass__answer_last_content__l0": ability + rng.normal() * 0.5,
+                    "f__gate_selection__a_pos_total__answer_last_content__l0": ability + rng.normal() * 0.4,
+                    "f__output_direction__o_out_norm__answer_last_content__l0": ability + rng.normal() * 0.4,
+                    "f__w2_literal__dot_pos_total__answer_last_content__l0": ability + rng.normal() * 0.4,
                     "prompt_token_hash": "x", "candidate_token_ids": [candidate],
                     "content_length": 1, "feature_spec_version": "test",
                     "multiplicity": multiplicity,
@@ -566,8 +724,8 @@ def test_cmd_evaluate_end_to_end(tmp_path, monkeypatch):
     }
     assert payload["within_question"] is not None
     assert payload["within_question"]["decision"]["verdict"].startswith("within_question")
-    # Multiplicity is applied: 12 test subjects x 4 candidates, plus one repeat
-    # per subject from the duplicated candidate.
+    # Multiplicity is applied: 12 test subjects x 4 candidates with 5+1+1+1
+    # draws each.
     assert payload["paired"]["n_subjects"] == 12
-    assert payload["paired"]["n_observations"] == 12 * 4 + 12
+    assert payload["paired"]["n_observations"] == 12 * 8
     assert (tmp_path / "evaluation").glob("decision__*.json")

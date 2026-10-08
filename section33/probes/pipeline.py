@@ -50,7 +50,10 @@ class Block:
         body = column[3:]
         if not any(body.startswith(prefix) for prefix in self.include):
             return False
-        if self.positions and not any(f"__{position}__" in body for position in self.positions):
+        if self.positions and not any(
+            f"__{position}__" in body or body.endswith(f"__{position}")
+            for position in self.positions
+        ):
             return False
         if self.layers is not None and not any(body.endswith(f"__l{layer}") for layer in self.layers):
             return False
@@ -78,6 +81,18 @@ def assemble_blocks(df, spec: ProbeSpec) -> dict[str, np.ndarray]:
         matrix = df[columns].to_numpy(dtype=np.float32, copy=True)
         matrices[block.name] = matrix
     return matrices
+
+
+def missing_blocks(df, spec: ProbeSpec) -> list[str]:
+    """Names of the spec's blocks that select no columns in ``df``."""
+
+    return [block.name for block in spec.blocks if not select_columns(df, block)]
+
+
+def spec_is_usable(df, spec: ProbeSpec) -> bool:
+    """True when every block of the spec has matching columns in ``df``."""
+
+    return not missing_blocks(df, spec)
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +230,11 @@ def fit_probe(
 ) -> tuple[FittedProbe, dict]:
     """Select a configuration with grouped inner CV, then fit on all training rows."""
 
+    missing = missing_blocks(df, spec)
+    if missing:
+        raise ValueError(
+            f"spec {spec.name!r} has empty blocks {missing}; refusing to fit a constant probe"
+        )
     matrices = assemble_blocks(df, spec)
     y = np.asarray(y).astype(int)
     groups = np.asarray(groups)
@@ -359,6 +379,36 @@ def standard_specs() -> dict[str, ProbeSpec]:
                     "h",
                     ("hiddenproj__post__", "hiddenproj__pre__"),
                     positions=last,
+                    pca_dim=PROTOCOL.nonlinear_hidden,
+                ),
+            ),
+            classifier="mlp",
+        ),
+        "H_M_256_256_after": ProbeSpec(
+            "H_M_256_256_after",
+            (
+                Block("h", ("hiddenproj__post__", "hiddenproj__pre__"), positions=after, pca_dim=PROTOCOL.pca_hidden_half),
+                Block("m_conc", ("contribution_concentration__",), positions=after, pca_dim=PROTOCOL.pca_mlp_half),
+            ),
+        ),
+        "H_768_after": ProbeSpec(
+            "H_768_after",
+            (
+                Block(
+                    "h",
+                    ("hiddenproj__post__", "hiddenproj__pre__"),
+                    positions=after,
+                    pca_dim=PROTOCOL.pca_budget + PROTOCOL.pca_mlp_half,
+                ),
+            ),
+        ),
+        "H_nonlinear_after": ProbeSpec(
+            "H_nonlinear_after",
+            (
+                Block(
+                    "h",
+                    ("hiddenproj__post__", "hiddenproj__pre__"),
+                    positions=after,
                     pca_dim=PROTOCOL.nonlinear_hidden,
                 ),
             ),

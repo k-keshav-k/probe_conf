@@ -98,6 +98,16 @@ class Protocol:
     # Statistics (plan section 9).
     bootstrap_samples: int = 10_000
     bootstrap_seed: int = 20261007
+    # Frozen family for simultaneous secondary intervals (Bonferroni across the
+    # family; the four AUROC p-values additionally use Holm).
+    secondary_family: tuple[str, ...] = (
+        "replication_hidden_plus_mlp_minus_hidden",
+        "mlp_minus_hidden",
+        "augmented_minus_confidence",
+        "augmented_minus_probability",
+        "within_question",
+        "mlp_minus_hidden_equivalence",
+    )
 
     # Interventions (plan section 8.3).
     intervention_top_k: tuple[int, ...] = (1, 5, 20)
