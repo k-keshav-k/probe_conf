@@ -13,11 +13,15 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-RUN_ROOT = ROOT / "runs" / "section33_v1"
+# ``cluster/env.sh`` exports RUN_DIR; honour it so a manual command without an
+# explicit ``--run`` uses the same run root as the sbatch scripts.  Local use
+# without RUN_DIR falls back to the repository copy.
+RUN_ROOT = Path(os.environ.get("RUN_DIR", ROOT / "runs" / "section33_v1"))
 
 # ---------------------------------------------------------------------------
 # Study definition
