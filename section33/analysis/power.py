@@ -5,8 +5,8 @@ Two simulators are provided:
 - ``simulate_paired_decision``: subject-level paired normal deltas with a
   stated mean effect and standard deviation.  Use it to map effect sizes and
   sample sizes to the probability of each verdict.
-- ``development_variance``: bootstrap the per-subject metric differences from
-  development predictions to estimate the standard deviations.  Never use the
+- ``development_variance``: estimate the per-subject standard deviations of the
+  metric differences from development predictions.  Never use the
   historical gold-dependent gain as the assumed effect.
 """
 
@@ -68,33 +68,32 @@ def simulate_paired_decision(
 def development_variance(
     deltas_auc: np.ndarray,
     deltas_brier: np.ndarray,
-    n_boot: int = 2000,
-    seed: int = 0,
 ) -> dict:
-    """Bootstrap standard deviations of per-subject paired differences."""
+    """Per-subject standard deviations of the paired metric differences.
+
+    ``simulate_paired_decision`` expects the SD of the per-subject deltas and
+    turns it into a standard error with ``sd / sqrt(n_subjects)``.  Bootstrapping
+    the means here would return a standard error instead and shrink every
+    simulated interval by another factor of ``sqrt(n)``.
+    """
 
     deltas_auc = np.asarray(deltas_auc, dtype=float)
     deltas_brier = np.asarray(deltas_brier, dtype=float)
-    if len(deltas_auc) < 2 or len(deltas_brier) < 2:
-        # Not enough per-subject deltas to estimate a variance (for example a
-        # cohort with one question per subject has no per-subject AUC deltas).
+    n = int(min(len(deltas_auc), len(deltas_brier)))
+    if n < 2 or len(deltas_auc) != len(deltas_brier):
+        # Not estimable: no mixed-label subjects, or the two arrays are not
+        # paired (for example a cohort with one question per subject).
         return {
             "sd_auc": float("nan"),
             "sd_brier": float("nan"),
             "corr": 0.0,
-            "n_subjects": int(min(len(deltas_auc), len(deltas_brier))),
+            "n_subjects": n,
         }
-    rng = np.random.default_rng(seed)
-    auc_values, brier_values = [], []
-    for _ in range(n_boot):
-        index = rng.integers(0, len(deltas_auc), len(deltas_auc))
-        auc_values.append(deltas_auc[index].mean())
-        brier_values.append(deltas_brier[index].mean())
     return {
-        "sd_auc": float(np.std(auc_values, ddof=1)),
-        "sd_brier": float(np.std(brier_values, ddof=1)),
-        "corr": float(np.corrcoef(deltas_auc, deltas_brier)[0, 1]) if len(deltas_auc) > 2 else 0.0,
-        "n_subjects": int(len(deltas_auc)),
+        "sd_auc": float(np.std(deltas_auc, ddof=1)),
+        "sd_brier": float(np.std(deltas_brier, ddof=1)),
+        "corr": float(np.corrcoef(deltas_auc, deltas_brier)[0, 1]),
+        "n_subjects": n,
     }
 
 

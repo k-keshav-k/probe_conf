@@ -27,6 +27,8 @@ from section33.analysis.interventions import (
     random_matched,
     shuffle_within_strata,
 )
+from section33.analysis.power import development_variance
+from section33.cli import _subject_deltas
 from section33.data.cohort import assign_popularity_strata, assign_splits, exclude_seen, verify_disjoint
 from section33.data.labels import match_candidate, normalize, token_match
 from section33.datasets import expand_by_multiplicity, metadata_features
@@ -195,6 +197,31 @@ def test_preprocessing_fitted_inside_folds_only():
     assert abs(scaler_mean - train_mean) < 1e-4
     full_mean = float(frame[column].mean())
     assert abs(full_mean - scaler_mean) > 0.1, "the held-out outlier must not influence the scaler"
+
+
+def test_subject_deltas_stay_paired():
+    frame = pd.DataFrame(
+        {
+            "subject_id": ["a", "a", "b", "b", "c"],
+            "label": [1, 0, 1, 1, 0],
+            "score_a": [0.9, 0.2, 0.8, 0.7, 0.3],
+            "score_b": [0.4, 0.6, 0.5, 0.9, 0.7],
+        }
+    )
+    auc_deltas, brier_deltas = _subject_deltas(frame, "score_a", "score_b")
+    assert len(auc_deltas) == len(brier_deltas) == 1, "only subject 'a' has both classes"
+
+
+def test_development_variance_is_per_subject_sd():
+    auc = np.array([0.10, -0.20, 0.30, 0.05])
+    brier = np.array([0.010, -0.020, 0.030, 0.005])
+    variance = development_variance(auc, brier)
+    assert variance["n_subjects"] == 4
+    assert abs(variance["sd_auc"] - np.std(auc, ddof=1)) < 1e-12
+    assert abs(variance["sd_brier"] - np.std(brier, ddof=1)) < 1e-12
+    assert np.isfinite(variance["corr"])
+    not_estimable = development_variance(np.array([0.1]), np.array([0.01]))
+    assert not np.isfinite(not_estimable["sd_auc"])
 
 
 def test_calibration_method_selection():

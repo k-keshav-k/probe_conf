@@ -230,15 +230,21 @@ def _add_metadata_columns(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _subject_deltas(dev: pd.DataFrame, score_a: str, score_b: str, label: str = "label") -> tuple[np.ndarray, np.ndarray]:
-    """Per-subject paired differences of AUROC contributions and Brier scores."""
+    """Per-subject paired differences of AUROC contributions and Brier scores.
+
+    Only subjects with both label classes contribute.  The AUC delta is
+    undefined for a single-class subject, and the power simulation needs the
+    two deltas to stay paired, so those subjects are skipped entirely.
+    """
 
     auc_deltas, brier_deltas = [], []
     for subject, block in dev.groupby("subject_id"):
         y = block[label].to_numpy()
         a = block[score_a].to_numpy()
         b = block[score_b].to_numpy()
-        if len(np.unique(y)) > 1:
-            auc_deltas.append(roc_auc_score(y, a) - roc_auc_score(y, b))
+        if len(np.unique(y)) < 2:
+            continue
+        auc_deltas.append(roc_auc_score(y, a) - roc_auc_score(y, b))
         brier_deltas.append(brier_score_loss(y, np.clip(b, 0, 1)) - brier_score_loss(y, np.clip(a, 0, 1)))
     return np.asarray(auc_deltas), np.asarray(brier_deltas)
 
@@ -289,11 +295,11 @@ def cmd_develop(args) -> dict:
         dev["score_B"] = predictions[baseline_key]
         dev["score_B_plus_M"] = predictions[comparison_key]
         auc_deltas, brier_deltas = _subject_deltas(dev, "score_B_plus_M", "score_B")
-        variance = development_variance(auc_deltas, brier_deltas, seed=args.seed)
+        variance = development_variance(auc_deltas, brier_deltas)
         if not (np.isfinite(variance["sd_auc"]) and np.isfinite(variance["sd_brier"])):
             log(
-                "development variance is not estimable (one question per subject "
-                "leaves no per-subject AUC deltas); skipping the power table"
+                "development variance is not estimable (no mixed-label subjects "
+                "with both classes); skipping the power table"
             )
         else:
             correlation = variance["corr"] if np.isfinite(variance["corr"]) else 0.8
