@@ -739,6 +739,16 @@ def test_bootstrap_p_value():
     assert bootstrap_p_value([-0.1, 0.1, 0.0]) == pytest.approx(1.0)
 
 
+def test_wikidata_query_uses_statement_property():
+    from section33.data.wikidata import QUERY_TEMPLATE
+
+    query = QUERY_TEMPLATE.format(property="P19", limit=10, offset=0)
+    assert "p:P19 ?statement" in query
+    assert "ps:P19 ?value" in query
+    assert "wdt:P19 ?statement" not in query
+    assert "schema:isPartOf <https://en.wikipedia.org/>" in query
+
+
 def test_cmd_verdict_reads_saved_decisions(tmp_path):
     from types import SimpleNamespace
 

@@ -13,29 +13,38 @@ Query design:
 - page views are joined from a frozen pageview dump outside this file, because
   the Query Service does not serve pageview counts;
 - source revisions come from the statement IDs in the response.
+
+The statement pattern is ``?subject p:{property} ?statement .
+?statement ps:{property} ?value``.  The earlier ``wdt:`` first hop bound the
+*value*, not the statement node, so it returned zero rows while forcing an
+expensive join.  Results are fetched in pages with retries for the Query
+Service's transient 429/5xx responses.
 """
 
 from __future__ import annotations
 
-import json
+import os
+import time
 from pathlib import Path
 
 import pandas as pd
 
 from ..config import RELATION_QIDS
 
-WIKIDATA_ENDPOINT = "https://query.wikidata.org/sparql"
+WIKIDATA_ENDPOINT = os.environ.get(
+    "WIKIDATA_ENDPOINT", "https://query.wikidata.org/sparql"
+)
 USER_AGENT = "section33-cohort/0.1 (research; contact: local user)"
 
 QUERY_TEMPLATE = """
-SELECT ?subject ?subjectLabel ?subjectDescription ?relationQid ?statement ?value ?valueLabel WHERE {{
-  ?subject wdt:P31 wd:Q5 .
-  ?subject wdt:{property} ?statement .
+SELECT ?subject ?subjectLabel ?statement ?value ?valueLabel WHERE {{
+  ?subject wdt:P31 wd:Q5 ;
+           p:{property} ?statement .
   ?statement ps:{property} ?value .
+  ?article schema:about ?subject ;
+           schema:isPartOf <https://en.wikipedia.org/> .
   ?subject rdfs:label ?subjectLabel . FILTER(LANG(?subjectLabel) = "en")
-  OPTIONAL {{ ?subject schema:description ?subjectDescription . FILTER(LANG(?subjectDescription) = "en") }}
-  BIND("{property}" AS ?relationQid)
-  SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en". }}
+  ?value rdfs:label ?valueLabel . FILTER(LANG(?valueLabel) = "en")
 }}
 LIMIT {limit}
 OFFSET {offset}
@@ -44,24 +53,33 @@ OFFSET {offset}
 
 def fetch_relation(
     relation: str,
-    limit: int = 5000,
+    limit: int = 2000,
     offset: int = 0,
     endpoint: str = WIKIDATA_ENDPOINT,
+    retries: int = 4,
+    backoff: float = 5.0,
 ) -> pd.DataFrame:
-    """Fetch statement rows for one relation from the Wikidata Query Service."""
+    """Fetch one page of statement rows, retrying transient Query Service errors."""
 
     import requests
 
     prop = RELATION_QIDS[relation]
     query = QUERY_TEMPLATE.format(property=prop, limit=limit, offset=offset)
-    response = requests.get(
-        endpoint,
-        params={"query": query, "format": "json"},
-        headers={"User-Agent": USER_AGENT},
-        timeout=120,
-    )
-    response.raise_for_status()
-    payload = response.json()
+    for attempt in range(retries + 1):
+        try:
+            response = requests.get(
+                endpoint,
+                params={"query": query, "format": "json"},
+                headers={"User-Agent": USER_AGENT},
+                timeout=120,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            break
+        except requests.RequestException:
+            if attempt == retries:
+                raise
+            time.sleep(backoff * (2**attempt))
     rows = []
     for binding in payload["results"]["bindings"]:
         rows.append(
@@ -78,11 +96,31 @@ def fetch_relation(
     return pd.DataFrame(rows)
 
 
-def fetch_cohort(out_path: Path, relations: tuple[str, ...] | None = None) -> Path:
-    """Fetch all four relations and write a CSV cohort table."""
+def fetch_cohort(
+    out_path: Path,
+    relations: tuple[str, ...] | None = None,
+    per_relation: int = 3000,
+    page_size: int = 2000,
+    endpoint: str = WIKIDATA_ENDPOINT,
+) -> Path:
+    """Fetch the requested relations in pages and write a CSV cohort table."""
 
     relations = relations or tuple(RELATION_QIDS)
-    frames = [fetch_relation(relation) for relation in relations]
+    frames = []
+    for relation in relations:
+        chunks = []
+        collected = 0
+        offset = 0
+        while collected < per_relation:
+            page = fetch_relation(relation, limit=page_size, offset=offset, endpoint=endpoint)
+            if page.empty:
+                break
+            chunks.append(page)
+            collected += len(page)
+            if len(page) < page_size:
+                break
+            offset += page_size
+        frames.append(pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame())
     combined = pd.concat(frames, ignore_index=True)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     combined.to_csv(out_path, index=False)
@@ -102,8 +140,21 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Fetch a fresh Wikidata cohort for section33")
     parser.add_argument("--out", type=Path, required=True, help="output CSV path")
     parser.add_argument("--relations", nargs="*", default=None)
+    parser.add_argument(
+        "--per-relation", type=int, default=3000,
+        help="target rows per relation (paged, with retries)",
+    )
+    parser.add_argument(
+        "--endpoint", default=WIKIDATA_ENDPOINT,
+        help="SPARQL endpoint (defaults to $WIKIDATA_ENDPOINT or the Wikidata service)",
+    )
     args = parser.parse_args(argv)
-    path = fetch_cohort(args.out, tuple(args.relations) if args.relations else None)
+    path = fetch_cohort(
+        args.out,
+        tuple(args.relations) if args.relations else None,
+        per_relation=args.per_relation,
+        endpoint=args.endpoint,
+    )
     print(f"wrote {path}")
     return 0
 
