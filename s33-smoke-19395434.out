@@ -1,0 +1,157 @@
+host: gl016.hpc.nyu.edu
+Wed Oct  7 20:07:25 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.43.02              KMD Version: 610.43.02     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA L40S                    On  |   00000000:D5:00.0 Off |                    0 |
+| N/A   33C    P8             34W /  350W |       0MiB /  46068MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+........................                                                 [100%]
+24 passed in 212.51s (0:03:32)
+[section33 20:12:08] track A: 0 done, 2 to collect
+[section33 20:12:21] track A batch 0: 1 questions
+[section33 20:12:21] track B: 0 done, 2 to collect
+[section33 20:12:22] track B batch 0: 7 unique candidates
+{
+  "contracts": {
+    "verify_mlp_contract": {
+      "n_layers": 3,
+      "biases": {
+        "0": {
+          "gate": false,
+          "up": false,
+          "down": false
+        },
+        "1": {
+          "gate": false,
+          "up": false,
+          "down": false
+        },
+        "2": {
+          "gate": false,
+          "up": false,
+          "down": false
+        }
+      },
+      "reconstruction": {
+        "max_abs_error": 0.0,
+        "per_layer_max_error": {
+          "0": 0.0,
+          "1": 0.0,
+          "2": 0.0
+        },
+        "passed": true
+      },
+      "bias_free": true,
+      "passed": true
+    },
+    "hook_reconstruction": {
+      "errors": {
+        "a": 1.4901161193847656e-07,
+        "b": 1.1920928955078125e-07,
+        "s": 3.3527612686157227e-08,
+        "o": 3.725290298461914e-09
+      },
+      "passed": true
+    },
+    "rescale_contribution_error": 1.3969838619232178e-09,
+    "rescale_output_error": 1.862645149230957e-09,
+    "rescale_passed": true,
+    "permutation_summary_error": {
+      "norm_entropy": 5.960464477539063e-08,
+      "top1_mass": 3.725290298461914e-09,
+      "top5_mass": 0.0,
+      "top1_minus_top2": 7.450580596923828e-09,
+      "effective_channels": 0.0,
+      "zero_mass": 0.0
+    },
+    "permutation_output_error": 1.862645149230957e-09,
+    "permutation_passed": true,
+    "reference_free": {
+      "passed": true
+    },
+    "passed": true
+  },
+  "pipeline": {
+    "fit_probe": {
+      "config": {
+        "C": 1.0,
+        "max_iter": 3000
+      },
+      "mean_brier": 0.12866568813721338,
+      "prediction_range": [
+        0.0003990553959738463,
+        0.9993749260902405
+      ]
+    },
+    "preprocessing_train_only": {
+      "scaler_mean": -0.01773910477141768,
+      "train_mean": -0.017739104107022285,
+      "full_mean_including_outlier": 0.3990014787337832,
+      "passed": true
+    },
+    "calibration": {
+      "selected": "isotonic",
+      "applied_range": [
+        0.0,
+        1.0
+      ]
+    },
+    "within_question": {
+      "value": 0.9444444444444444,
+      "expected": 0.9444444444444444
+    },
+    "decision": {
+      "verdict": "useful_improvement_supported",
+      "reason": "both lower bounds exceed the registered practical margins and the calibration guardrail passes",
+      "delta_auc": 0.04,
+      "delta_auc_interval": [
+        0.025,
+        0.055
+      ],
+      "delta_brier": 0.01,
+      "delta_brier_interval": [
+        0.006,
+        0.014
+      ],
+      "calibration_error_increase": [
+        0.001,
+        0.004
+      ],
+      "calibration_ok": true
+    },
+    "interventions": {
+      "identity_error": 9.5367431640625e-07,
+      "top_mass": 16.6156005859375,
+      "random_mass": 16.6156005859375,
+      "random_matched": true
+    },
+    "passed": true
+  },
+  "end_to_end": {
+    "track_a_labels_lines": 2,
+    "track_a_confidence_lines": 2,
+    "track_a_features_lines": 2,
+    "track_b_labels_lines": 13,
+    "track_b_confidence_lines": 13,
+    "track_b_features_lines": 26,
+    "feature_rows": 28,
+    "reference_or_label_in_features": false,
+    "passed": true
+  },
+  "all_passed": true
+}
+[section33 20:12:22] smoke checks passed

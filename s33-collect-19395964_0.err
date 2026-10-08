@@ -1,0 +1,27 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/scratch/kk6081/probe_conf/section33/cli.py", line 531, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/scratch/kk6081/probe_conf/section33/cli.py", line 525, in main
+    result = args.func(args)
+             ^^^^^^^^^^^^^^^
+  File "/scratch/kk6081/probe_conf/section33/cli.py", line 162, in cmd_collect
+    cohort = pd.read_parquet(paths["manifests"] / "cohort.parquet")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/ext3/.venv/lib/python3.12/site-packages/pandas/io/parquet.py", line 671, in read_parquet
+    return impl.read(
+           ^^^^^^^^^^
+  File "/ext3/.venv/lib/python3.12/site-packages/pandas/io/parquet.py", line 253, in read
+    path_or_handle, handles, filesystem = _get_path_or_handle(
+                                          ^^^^^^^^^^^^^^^^^^^^
+  File "/ext3/.venv/lib/python3.12/site-packages/pandas/io/parquet.py", line 141, in _get_path_or_handle
+    handles = get_handle(
+              ^^^^^^^^^^^
+  File "/ext3/.venv/lib/python3.12/site-packages/pandas/io/common.py", line 939, in get_handle
+    handle = open(handle, ioargs.mode)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/scratch/kk6081/section33_v1/manifests/cohort.parquet'
+srun: error: gh107: task 0: Exited with exit code 1
+srun: Terminating StepId=19395964.0

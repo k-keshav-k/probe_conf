@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/scratch/kk6081/probe_conf/cluster/check_contract.py", line 20, in <module>
+    from section33.models.collect import ModelWeights, extract_features_for_sequences
+ModuleNotFoundError: No module named 'section33'
+srun: error: gl057: task 0: Exited with exit code 1
+srun: Terminating StepId=19395435.0

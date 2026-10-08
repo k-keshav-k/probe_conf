@@ -1,0 +1,6 @@
+INFO:    FUSE2FS (3): Warning: Mounting unchecked fs, running e2fsck is recommended.
+/scratch/kk6081/probe_conf/section33/smoke.py:93: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:820.)
+  "a": float((a - a_ref).abs().max()),
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/290 [00:00<?, ?it/s]Loading weights:   0%|          | 1/290 [00:00<04:06,  1.17it/s]Loading weights:  47%|████▋     | 137/290 [00:00<00:00, 192.80it/s]Loading weights:  72%|███████▏  | 210/290 [00:01<00:00, 217.99it/s]Loading weights:  90%|█████████ | 262/290 [00:01<00:00, 229.12it/s]Loading weights: 100%|██████████| 290/290 [00:01<00:00, 188.93it/s]
