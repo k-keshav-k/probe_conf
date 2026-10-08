@@ -187,6 +187,28 @@ LABEL_POLICY_VERSION = "label_policy_v1"
 MATCH_POLICY_VERSION = "match_policy_v1"
 
 
+def prompt_manifest() -> dict:
+    """Content hashes of the frozen prompt and policy text.
+
+    The protocol dataclass cannot carry the prompt strings, so their hashes are
+    written next to it at setup and verified before evaluation (review F12).
+    """
+
+    def digest(text: str) -> str:
+        return hashlib.sha256(text.encode()).hexdigest()
+
+    return {
+        "system_prompt": digest(SYSTEM_PROMPT),
+        "fewshot": digest(json.dumps(FEWSHOT)),
+        "stop_strings": digest(json.dumps(STOP_STRINGS)),
+        "confidence_track_a": digest(CONFIDENCE_TRACK_A),
+        "confidence_track_b": digest(CONFIDENCE_TRACK_B),
+        "prompt_version": PROMPT_VERSION,
+        "label_policy_version": LABEL_POLICY_VERSION,
+        "match_policy_version": MATCH_POLICY_VERSION,
+    }
+
+
 def run_paths(run_root: Path | None = None) -> dict[str, Path]:
     """Return the artefact layout required by plan section 12."""
 

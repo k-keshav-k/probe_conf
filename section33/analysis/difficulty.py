@@ -13,6 +13,7 @@ Nothing here uses test labels to choose bins.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -174,12 +175,18 @@ def cross_fitted_binomial(
 def residual_correlation(residual: np.ndarray, score: np.ndarray) -> dict:
     """Spearman correlation of a residual with a score (secondary diagnostic)."""
 
-    from scipy.stats import spearmanr
+    from scipy.stats import ConstantInputWarning, spearmanr
 
     mask = np.isfinite(residual) & np.isfinite(score)
     if mask.sum() < 3:
         return {"rho": None, "n": int(mask.sum())}
-    rho = spearmanr(residual[mask], np.asarray(score)[mask]).statistic
+    residual_values = np.asarray(residual, dtype=float)[mask]
+    score_values = np.asarray(score, dtype=float)[mask]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ConstantInputWarning)
+        rho = spearmanr(residual_values, score_values).statistic
+    if not np.isfinite(rho):
+        return {"rho": None, "n": int(mask.sum())}
     return {"rho": float(rho), "n": int(mask.sum())}
 
 

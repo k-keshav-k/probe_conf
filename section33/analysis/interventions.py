@@ -60,7 +60,7 @@ def attenuate_topk(
     s_new[..., topk] = s_new[..., topk] * attenuation
     o_new = _output(s_new, w_down)
     o_old = _output(s, w_down)
-    removed = float((e[..., topk].sum()).item())
+    removed = float((e[..., topk] * (1.0 - attenuation)).sum().item())
     perturbation = float((o_new - o_old).norm().item())
     return InterventionResult(
         f"attenuate_top{k}_x{attenuation}", s_new, o_new, removed, perturbation, True
@@ -121,15 +121,21 @@ def flatten_sharpen(
 ) -> InterventionResult:
     """Redistribute contribution mass with a power law, keeping signs.
 
+    The transformation acts on the channel contribution mass
+    ``e_j = |s_j| * ||W_down[:, j]||``, which is invariant under the
+    function-preserving rescaling ``W_up[:, j] *= k``, ``W_down[:, j] /= k``.
     ``exponent < 1`` flattens (more equal contributions).  ``exponent > 1``
-    sharpens (a few channels dominate).  Total absolute mass is preserved
-    before the optional norm restoration step.
+    sharpens (a few channels dominate).  Total mass is preserved before the
+    optional norm restoration step.
     """
 
-    magnitude = s.abs()
-    powered = magnitude.pow(exponent)
-    scale = powered.sum(dim=-1, keepdim=True) / magnitude.sum(dim=-1, keepdim=True).clamp_min(1e-12)
-    s_new = torch.sign(s) * powered / scale.clamp_min(1e-12)
+    v_norms = w_down.norm(dim=0)
+    mass = _mass(s, v_norms)
+    powered = mass.pow(exponent)
+    target = mass.sum(dim=-1, keepdim=True)
+    scale = powered.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+    mass_new = powered * target / scale
+    s_new = torch.sign(s) * mass_new / v_norms.clamp_min(1e-12)
     o_old = _output(s, w_down)
     o_new = _output(s_new, w_down)
     if restore_norm:
@@ -140,9 +146,10 @@ def flatten_sharpen(
         f"power_{exponent}_restore{int(restore_norm)}",
         s_new,
         o_new,
-        float((magnitude - s_new.abs()).abs().sum().item()),
+        float((mass - mass_new).abs().sum().item()),
         float((o_new - o_old).norm().item()),
         True,
+        "mass redistribution on |s_j| * ||W_down[:, j]||",
     )
 
 

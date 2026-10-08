@@ -42,12 +42,14 @@ from .analysis.power import (
     power_table,
     within_question_power_table,
 )
-from .config import PROTOCOL, run_paths, write_protocol
+from .config import PROTOCOL, prompt_manifest, run_paths, write_protocol
 from .data.cohort import (
     CohortQuestion,
     build_cohort,
     freeze_splits,
     load_seen_subjects,
+    manifest_hash,
+    validate_cohort,
 )
 from .datasets import expand_by_multiplicity, load_split, metadata_features
 from .models.collect import CollectSettings, collect
@@ -80,6 +82,7 @@ def cmd_setup(args) -> dict:
     paths = run_paths(args.run)
     ensure_dirs(paths)
     protocol_hash = write_protocol(paths["protocol"] / "protocol.json")
+    write_json(paths["protocol"] / "prompt_manifest.json", prompt_manifest())
     _write_schema_readme(
         paths["protocol"], "protocol",
         "Frozen design: margins, splits, prompts, budgets. Do not edit after the "
@@ -150,6 +153,12 @@ def cmd_cohort(args) -> dict:
         "test": args.test,
     }
     df, split_manifest = freeze_splits(df, sizes=sizes, seed=args.seed)
+    validation = validate_cohort(
+        df, sizes, mode=getattr(args, "mode", "pilot"), excluded_subjects=len(seen)
+    )
+    if validation["problems"]:
+        for problem in validation["problems"]:
+            log(f"cohort validation: {problem}")
     df.to_parquet(paths["manifests"] / "cohort.parquet", index=False)
     manifest = {
         "source": args.source,
@@ -159,6 +168,7 @@ def cmd_cohort(args) -> dict:
         **split_manifest,
         "relation_counts": df["relation"].value_counts().to_dict(),
         "stratum_counts": df["stratum"].value_counts().to_dict(),
+        "design_validation": validation,
     }
     write_json(paths["manifests"] / "cohort_manifest.json", manifest)
     log(f"cohort ready: {len(df)} questions, {df['subject_id'].nunique()} subjects")
@@ -341,9 +351,94 @@ def _strip_samples(result: dict) -> dict:
     return {key: value for key, value in result.items() if not key.endswith("_samples")}
 
 
+def _verify_protocol(paths) -> dict:
+    """Require the frozen protocol and prompt manifest before evaluation."""
+
+    protocol_path = paths["protocol"] / "protocol.json"
+    if not protocol_path.exists():
+        raise SystemExit(f"frozen protocol missing: {protocol_path}; run setup first")
+    stored = json.loads(protocol_path.read_text())
+    if stored.get("protocol_hash") != PROTOCOL.content_hash():
+        raise SystemExit(
+            "protocol hash mismatch: the frozen protocol does not match the current "
+            "code; evaluation refused"
+        )
+    prompt_path = paths["protocol"] / "prompt_manifest.json"
+    if not prompt_path.exists():
+        raise SystemExit(f"prompt manifest missing: {prompt_path}; run setup first")
+    if json.loads(prompt_path.read_text()) != prompt_manifest():
+        raise SystemExit("prompt manifest mismatch: prompt text changed after setup")
+    return stored
+
+
+def _fitted_artifact(probe, calibrator, spec, train) -> dict:
+    """Serialisable fitted pipeline for provenance (review F12)."""
+
+    artifact = {
+        "spec": spec.name,
+        "classifier": spec.classifier,
+        "blocks": [block.name for block in spec.blocks],
+        "training_subject_hash": manifest_hash(train["subject_id"].unique()),
+        "n_training_rows": int(len(train)),
+        "calibrator": {"method": calibrator.method},
+    }
+    classifier = probe.classifier
+    if classifier is not None and hasattr(classifier, "coef_"):
+        artifact["coefficients"] = np.asarray(classifier.coef_, dtype=float).tolist()
+        artifact["intercept"] = np.asarray(classifier.intercept_, dtype=float).tolist()
+    if calibrator.method == "platt" and calibrator.model is not None:
+        artifact["calibrator"]["coef"] = np.asarray(calibrator.model.coef_, dtype=float).tolist()
+        artifact["calibrator"]["intercept"] = np.asarray(calibrator.model.intercept_, dtype=float).tolist()
+    if calibrator.method == "isotonic" and calibrator.model is not None:
+        artifact["calibrator"]["x_thresholds"] = np.asarray(calibrator.model.X_thresholds_, dtype=float).tolist()
+        artifact["calibrator"]["y_thresholds"] = np.asarray(calibrator.model.y_thresholds_, dtype=float).tolist()
+    return artifact
+
+
+def _difficulty_report(frame, test, method: str) -> dict | None:
+    """Descriptive difficulty, reliability, and coverage checks (review F11)."""
+
+    from sklearn.linear_model import LogisticRegression
+
+    from .analysis.difficulty import residual_correlation
+    from .probes.calibration import reliability_bins, risk_coverage
+
+    meta_columns = [c for c in frame.columns if c.startswith("f__meta__")]
+    train = frame[frame["split"] == "train"]
+    if not meta_columns or train.empty or test.empty or test["label"].nunique() < 2:
+        return None
+    model = LogisticRegression(max_iter=3000, C=0.1)
+    model.fit(train[meta_columns].to_numpy(), train["label"].to_numpy())
+    difficulty = model.predict_proba(test[meta_columns].to_numpy())[:, 1]
+    labels = test["label"].to_numpy()
+    scores = test[f"cal_{method}"].to_numpy()
+    high = difficulty >= np.median(difficulty)
+
+    def auc(mask) -> float | None:
+        if len(np.unique(labels[mask])) < 2:
+            return None
+        return float(roc_auc_score(labels[mask], scores[mask]))
+
+    return {
+        "difficulty_model_train_auroc": float(
+            roc_auc_score(train["label"], model.predict_proba(train[meta_columns].to_numpy())[:, 1])
+        )
+        if train["label"].nunique() > 1
+        else None,
+        "method_auroc_overall": auc(np.ones(len(labels), dtype=bool)),
+        "method_auroc_high_difficulty": auc(high),
+        "method_auroc_low_difficulty": auc(~high),
+        "residual_correlation": residual_correlation(labels - scores, difficulty),
+        "reliability": reliability_bins(scores, labels),
+        "risk_coverage": risk_coverage(scores, labels),
+        "note": "difficulty uses pre-answer metadata only; median split is descriptive",
+    }
+
+
 def cmd_evaluate(args) -> dict:
     paths = run_paths(args.run)
     ensure_dirs(paths)
+    protocol = _verify_protocol(paths)
     slug = _slug(args.model)
     track = args.track.upper()
     frame = load_split(
@@ -387,6 +482,7 @@ def cmd_evaluate(args) -> dict:
 
     outputs = {}
     feature_manifest = {}
+    fitted_artifacts = {}
     for name in method_names:
         spec = specs[name]
         blocks = assemble_blocks(train, spec)
@@ -402,6 +498,7 @@ def cmd_evaluate(args) -> dict:
         calibrator, calibration_info = fit_calibrator(
             raw_calibration, calibration["label"].to_numpy(), calibration["subject_id"].to_numpy()
         )
+        fitted_artifacts[name] = _fitted_artifact(probe, calibrator, spec, train)
         test[f"cal_{name}"] = calibrator.apply(probe.predict(assemble_blocks(test, spec)))
         outputs[name] = {
             "inner": best,
@@ -411,6 +508,11 @@ def cmd_evaluate(args) -> dict:
             else None,
         }
         log(f"{name}: test AUROC {outputs[name]['test_auroc']}")
+
+    write_json(
+        paths["probes"] / f"fitted__{slug}__track{track}.json",
+        {"protocol_hash": protocol["protocol_hash"], "methods": fitted_artifacts},
+    )
 
     # The frame was expanded on load, so per-method and paired metrics use the
     # same eight-draw population (plan section 5.2).
@@ -472,6 +574,17 @@ def cmd_evaluate(args) -> dict:
         "track": track,
         "comparison": augment,
         "baseline": base,
+        "protocol_hash": protocol["protocol_hash"],
+        "label_policy_versions": sorted(
+            test["label_policy_version"].dropna().unique().tolist()
+        )
+        if "label_policy_version" in test.columns
+        else [],
+        "feature_spec_versions": sorted(
+            test["feature_spec_version"].dropna().unique().tolist()
+        )
+        if "feature_spec_version" in test.columns
+        else [],
         "paired": _strip_samples(primary),
         "calibration_guardrail_increase": list(guardrail),
         "decision": decision.to_row(),
@@ -480,6 +593,7 @@ def cmd_evaluate(args) -> dict:
         "claim_family": list(PROTOCOL.secondary_family),
         "secondary_confidence": family_confidence,
         "within_question": within,
+        "difficulty": _difficulty_report(frame, test, augment),
         "methods": outputs,
         "feature_manifest": feature_manifest,
     }
@@ -509,13 +623,32 @@ def cmd_audit(args) -> dict:
         report["checks"]["cohort_manifest"] = {
             "n_questions": manifest.get("sizes_actual"),
             "relation_counts": manifest.get("relation_counts"),
+            "design_validation": manifest.get("design_validation"),
         }
-    report["checks"]["protocol_hash"] = (
-        json.loads((paths["protocol"] / "protocol.json").read_text()).get("protocol_hash")
-        if (paths["protocol"] / "protocol.json").exists()
-        else "missing"
-    )
-    if report["checks"]["protocol_hash"] == "missing":
+    else:
+        report["checks"]["cohort_manifest"] = "missing"
+        report["passed"] = False
+
+    protocol_path = paths["protocol"] / "protocol.json"
+    if protocol_path.exists():
+        stored_hash = json.loads(protocol_path.read_text()).get("protocol_hash")
+        report["checks"]["protocol_hash"] = stored_hash
+        if stored_hash != PROTOCOL.content_hash():
+            report["checks"]["protocol_mismatch"] = "stored protocol differs from the current code"
+            report["passed"] = False
+    else:
+        report["checks"]["protocol_hash"] = "missing"
+        report["passed"] = False
+
+    prompt_path = paths["protocol"] / "prompt_manifest.json"
+    if prompt_path.exists():
+        if json.loads(prompt_path.read_text()) == prompt_manifest():
+            report["checks"]["prompt_manifest"] = "ok"
+        else:
+            report["checks"]["prompt_manifest"] = "mismatch"
+            report["passed"] = False
+    else:
+        report["checks"]["prompt_manifest"] = "missing"
         report["passed"] = False
     write_json(paths["evaluation"] / "audit.json", report)
     if not report["passed"]:
@@ -553,6 +686,10 @@ def build_parser() -> argparse.ArgumentParser:
     cohort.add_argument("--seed", type=int, default=0)
     cohort.add_argument("--revision", default="")
     cohort.add_argument("--allow-seen", action="store_true")
+    cohort.add_argument(
+        "--mode", choices=["pilot", "confirmatory"], default="pilot",
+        help="confirmatory rejects missing relations, unmet quotas, and empty exclusions",
+    )
     cohort.set_defaults(func=cmd_cohort)
 
     collect_cmd = sub.add_parser("collect", help="collect one track and split")

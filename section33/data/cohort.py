@@ -290,6 +290,43 @@ def verify_disjoint(df: pd.DataFrame) -> dict:
     return overlaps
 
 
+def validate_cohort(
+    df: pd.DataFrame,
+    sizes: dict,
+    *,
+    mode: str = "pilot",
+    relations: tuple[str, ...] = RELATIONS,
+    excluded_subjects: int = 0,
+) -> dict:
+    """Check the cohort against the declared design.
+
+    ``pilot`` records every problem as a warning and lets the run continue;
+    ``confirmatory`` raises, so an undersized, unbalanced, or incompletely
+    excluded cohort can never be used for a final claim (review F7).
+    """
+
+    problems: list[str] = []
+    actual = df["split"].value_counts().to_dict()
+    for split, requested in sizes.items():
+        if actual.get(split, 0) != requested:
+            problems.append(f"split {split}: requested {requested}, actual {actual.get(split, 0)}")
+    present = set(df["relation"].unique())
+    for relation in relations:
+        if relation not in present:
+            problems.append(f"relation {relation}: absent")
+    relation_counts = df["relation"].value_counts().to_dict()
+    if len(present) == len(relations):
+        values = [relation_counts.get(relation, 0) for relation in relations]
+        if min(values) != max(values):
+            problems.append(f"relation counts unbalanced: {relation_counts}")
+    if excluded_subjects == 0:
+        problems.append("no excluded subjects: the historical exclusion list is empty")
+    report = {"mode": mode, "problems": problems, "passed": not problems}
+    if problems and mode == "confirmatory":
+        raise ValueError("cohort does not meet the confirmatory design: " + "; ".join(problems))
+    return report
+
+
 def build_cohort(
     source: Path,
     seen_subjects: set[str],

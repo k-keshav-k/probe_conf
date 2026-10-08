@@ -90,7 +90,8 @@ def load_split(
         feature_primary = features[features["position"] == "answer_last_content"]
     feature_columns = [c for c in feature_primary.columns if c.startswith("f__") or c in
                        ("subject_id", "question_id", "split", "track", "answer_index", "generation_seed",
-                        "position", "candidate_token_ids", "candidate_key", "content_length", "multiplicity")]
+                        "position", "candidate_token_ids", "candidate_key", "content_length", "multiplicity",
+                        "feature_spec_version")]
     merged = labels.merge(
         feature_primary[feature_columns],
         on=key_columns,

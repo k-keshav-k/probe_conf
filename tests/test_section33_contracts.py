@@ -21,9 +21,11 @@ from section33.analysis.evaluation import (
     decide_primary,
     decide_equivalence,
     decide_within_question,
+    paired_subject_bootstrap,
 )
 from section33.analysis.interventions import (
     attenuate_topk,
+    flatten_sharpen,
     identity,
     permuted_labels,
     random_matched,
@@ -34,7 +36,13 @@ from section33.analysis.power import (
     paired_development_distribution,
     simulate_paired_decision,
 )
-from section33.data.cohort import assign_popularity_strata, assign_splits, exclude_seen, verify_disjoint
+from section33.data.cohort import (
+    assign_popularity_strata,
+    assign_splits,
+    exclude_seen,
+    validate_cohort,
+    verify_disjoint,
+)
 from section33.data.labels import match_candidate, normalize, token_match
 from section33.datasets import expand_by_multiplicity, load_split, metadata_features
 from section33.features import families as fam
@@ -43,7 +51,7 @@ from section33.features.hidden import DEFAULT_PROJ_LAYERS, HiddenProjector, proj
 from section33.features.probability import sequence_features
 from section33.models.collect import ModelWeights, extract_features_for_sequences
 from section33.models.contract import MLPCapture, mlp_modules, verify_mlp_contract
-from section33.probes.calibration import fit_calibrator
+from section33.probes.calibration import corrected_calibration_error, fit_calibrator
 from section33.probes.pipeline import Block, ProbeSpec, fit_probe, select_columns, standard_specs
 from section33.smoke import _StubLoaded, _StubTokenizer, make_tiny_model
 
@@ -348,6 +356,88 @@ def test_power_scales_with_sample_size():
     assert harm["p_harm_supported"] > 0.90
 
 
+def test_validate_cohort_modes():
+    partial = pd.DataFrame(
+        {
+            "subject_id": ["a", "b", "c", "d"],
+            "question_id": ["q1", "q2", "q3", "q4"],
+            "relation": ["father", "father", "occupation", "occupation"],
+            "stratum": ["0", "0", "0", "0"],
+            "split": ["train", "train", "dev", "dev"],
+        }
+    )
+    sizes = {"train": 2, "dev": 2, "calibration": 0, "test": 0}
+    pilot = validate_cohort(partial, sizes, mode="pilot", excluded_subjects=0)
+    assert not pilot["passed"]
+    assert any("relation" in problem for problem in pilot["problems"])
+    with pytest.raises(ValueError, match="confirmatory"):
+        validate_cohort(partial, sizes, mode="confirmatory", excluded_subjects=0)
+
+    complete = pd.DataFrame(
+        {
+            "subject_id": ["a", "b", "c", "d"],
+            "question_id": ["q1", "q2", "q3", "q4"],
+            "relation": ["father", "mother", "place_of_birth", "occupation"],
+            "stratum": ["0", "0", "0", "0"],
+            "split": ["train"] * 4,
+        }
+    )
+    good = validate_cohort(
+        complete,
+        {"train": 4, "dev": 0, "calibration": 0, "test": 0},
+        mode="confirmatory",
+        excluded_subjects=100,
+    )
+    assert good["passed"]
+
+
+def test_simultaneous_confidence_widens_intervals():
+    rng = np.random.default_rng(0)
+    n = 60
+    frame = pd.DataFrame(
+        {
+            "subject_id": [f"s{i}" for i in range(n)],
+            "label": rng.integers(0, 2, n),
+            "a": rng.random(n),
+            "b": rng.random(n),
+            "relation": "father",
+            "stratum": "0",
+        }
+    )
+    narrow = paired_subject_bootstrap(frame, "a", "b", "label", n_boot=200, seed=0, confidence=0.95)
+    wide = paired_subject_bootstrap(frame, "a", "b", "label", n_boot=200, seed=0, confidence=0.99)
+    narrow_width = narrow["delta_auc_interval"][1] - narrow["delta_auc_interval"][0]
+    wide_width = wide["delta_auc_interval"][1] - wide["delta_auc_interval"][0]
+    assert wide_width >= narrow_width
+    assert wide["confidence"] == 0.99
+
+
+def test_corrected_calibration_error_cluster_aware():
+    scores = np.array([0.1, 0.2, 0.3, 0.8, 0.9, 0.95])
+    labels = np.array([0, 0, 1, 1, 1, 1])
+    groups = np.array(["a", "a", "b", "c", "c", "c"])
+    value = corrected_calibration_error(scores, labels, groups=groups)
+    assert np.isfinite(value)
+
+
+def test_flatten_sharpen_is_rescaling_invariant():
+    s = torch.tensor([1.0, 1.0])
+    w = torch.diag(torch.tensor([1.0, 10.0]))
+    scale = torch.tensor([10.0, 1.0])
+    normal = flatten_sharpen(s, w, exponent=0.5)
+    rescaled = flatten_sharpen(s * scale, w / scale, exponent=0.5)
+    assert torch.allclose(w @ s, (w / scale) @ (s * scale), atol=1e-6)
+    assert torch.allclose(normal.o_new, rescaled.o_new, atol=1e-5)
+
+
+def test_attenuate_removed_mass_accounts_for_partial_scaling():
+    s = torch.tensor([1.0, 2.0])
+    w = torch.eye(2)
+    v_norms = w.norm(dim=0)
+    result = attenuate_topk(s, w, v_norms, k=1, attenuation=0.5)
+    assert result.removed_mass == pytest.approx(1.0)
+
+
 def test_calibration_method_selection():
     frame = _synthetic_frame(seed=1)
     scores = np.clip(frame["f__hiddenproj__post__last_prompt__l0__k0"].to_numpy() * 0.2 + 0.5, 0, 1)
@@ -631,7 +721,7 @@ def test_cmd_evaluate_end_to_end(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     import section33.analysis.evaluation as evaluation
-    from section33.cli import cmd_evaluate
+    from section33.cli import cmd_evaluate, cmd_setup
     from section33.config import PROTOCOL, run_paths
 
     # Small bootstrap for test speed; production uses 10,000.
@@ -641,6 +731,7 @@ def test_cmd_evaluate_end_to_end(tmp_path, monkeypatch):
         dataclasses.replace(PROTOCOL, bootstrap_samples=150, bootstrap_seed=1),
     )
 
+    cmd_setup(SimpleNamespace(run=tmp_path))
     paths = run_paths(tmp_path)
     for folder in (tmp_path / "labels", tmp_path / "features", tmp_path / "evaluation"):
         folder.mkdir(parents=True, exist_ok=True)
@@ -724,6 +815,10 @@ def test_cmd_evaluate_end_to_end(tmp_path, monkeypatch):
     }
     assert payload["within_question"] is not None
     assert payload["within_question"]["decision"]["verdict"].startswith("within_question")
+    assert payload["protocol_hash"] == PROTOCOL.content_hash()
+    assert payload["feature_manifest"]["B_plus_M_after"]["total_columns"] > 0
+    assert payload["difficulty"] is not None
+    assert list((tmp_path / "probes").glob("fitted__*.json"))
     # Multiplicity is applied: 12 test subjects x 4 candidates with 5+1+1+1
     # draws each.
     assert payload["paired"]["n_subjects"] == 12
