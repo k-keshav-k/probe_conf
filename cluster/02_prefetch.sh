@@ -96,4 +96,20 @@ else
   echo "Skipped. Set FETCH_WIKIDATA=1 to fetch a fresh Wikidata cohort."
 fi
 
+# Confirmatory mode requires a popularity stratum, so join the frozen pageview
+# dump here when one is supplied:  PAGEVIEW_CSV=/path/pageviews.csv
+if [ -n "${PAGEVIEW_CSV:-}" ] && [ -f "$RUN_DIR/source/wikidata_cohort.csv" ]; then
+  echo "== joining pageviews from $PAGEVIEW_CSV =="
+  python - <<PY
+import pandas as pd
+from pathlib import Path
+from section33.data.wikidata import attach_popularity
+
+cohort = pd.read_csv("$RUN_DIR/source/wikidata_cohort.csv")
+joined = attach_popularity(cohort, Path("$PAGEVIEW_CSV"))
+joined.to_csv("$RUN_DIR/source/wikidata_cohort.csv", index=False)
+print(f"popularity joined for {int(joined['popularity'].notna().sum())} of {len(joined)} rows")
+PY
+fi
+
 echo "Prefetch done."

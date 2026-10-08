@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from ..config import RELATION_QIDS
+from ..config import RELATION_QIDS, RELATION_QUESTIONS
 
 WIKIDATA_ENDPOINT = os.environ.get(
     "WIKIDATA_ENDPOINT", "https://query.wikidata.org/sparql"
@@ -87,16 +87,22 @@ def fetch_relation(
                 raise
             time.sleep(backoff * (2**attempt))
     rows = []
+    template = RELATION_QUESTIONS[relation]
     for binding in payload["results"]["bindings"]:
+        statement = binding.get("statement", {}).get("value", "")
+        subject_id = binding["subject"]["value"].rsplit("/", 1)[-1]
+        subject_name = binding.get("subjectLabel", {}).get("value", "") or subject_id
         rows.append(
             {
-                "subject_id": binding["subject"]["value"].rsplit("/", 1)[-1],
-                "subject_name": binding.get("subjectLabel", {}).get("value", ""),
+                "question_id": statement.rsplit("/", 1)[-1] if statement else f"{subject_id}-{prop}",
+                "subject_id": subject_id,
+                "subject_name": subject_name,
                 "relation": relation,
                 "relation_qid": prop,
-                "statement": binding.get("statement", {}).get("value", ""),
+                "question": template.format(subject=subject_name),
+                "statement": statement,
                 "reference_answers": binding.get("valueLabel", {}).get("value", ""),
-                "source_revision": binding.get("statement", {}).get("value", ""),
+                "source_revision": statement,
             }
         )
     return pd.DataFrame(rows)

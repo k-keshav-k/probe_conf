@@ -321,6 +321,15 @@ def validate_cohort(
             problems.append(f"relation counts unbalanced: {relation_counts}")
     if excluded_subjects == 0:
         problems.append("no excluded subjects: the historical exclusion list is empty")
+    if mode == "confirmatory":
+        missing_share = (
+            float((df["stratum"] == MISSING_POPULARITY_STRATUM).mean()) if len(df) else 1.0
+        )
+        if missing_share > 0.10:
+            problems.append(
+                f"{missing_share:.0%} of subjects have no popularity stratum; "
+                "join the frozen pageview dump before building the cohort"
+            )
     report = {"mode": mode, "problems": problems, "passed": not problems}
     if problems and mode == "confirmatory":
         raise ValueError("cohort does not meet the confirmatory design: " + "; ".join(problems))

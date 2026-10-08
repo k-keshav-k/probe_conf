@@ -391,6 +391,15 @@ def test_validate_cohort_modes():
     )
     assert good["passed"]
 
+    unweighted = complete.assign(stratum="missing")
+    with pytest.raises(ValueError, match="popularity"):
+        validate_cohort(
+            unweighted,
+            {"train": 4, "dev": 0, "calibration": 0, "test": 0},
+            mode="confirmatory",
+            excluded_subjects=100,
+        )
+
 
 def test_simultaneous_confidence_widens_intervals():
     rng = np.random.default_rng(0)
@@ -747,6 +756,47 @@ def test_wikidata_query_uses_statement_property():
     assert "ps:P19 ?value" in query
     assert "wdt:P19 ?statement" not in query
     assert "schema:isPartOf <https://en.wikipedia.org/>" in query
+
+
+def test_relation_question_templates_cover_relations():
+    from section33.config import RELATION_QUESTIONS, RELATIONS
+
+    assert set(RELATION_QUESTIONS) == set(RELATIONS)
+    for template in RELATION_QUESTIONS.values():
+        assert "{subject}" in template
+
+
+def test_wikidata_fetch_builds_question_columns(monkeypatch):
+    import requests
+
+    from section33.data import wikidata
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "results": {
+                    "bindings": [
+                        {
+                            "subject": {"value": "http://www.wikidata.org/entity/Q42"},
+                            "subjectLabel": {"value": "Douglas Adams"},
+                            "statement": {
+                                "value": "http://www.wikidata.org/entity/statement/Q42-abc"
+                            },
+                            "valueLabel": {"value": "Cambridge"},
+                        }
+                    ]
+                }
+            }
+
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: FakeResponse())
+    frame = wikidata.fetch_relation("place_of_birth", limit=1)
+    assert frame.loc[0, "question_id"] == "Q42-abc"
+    assert frame.loc[0, "question"] == "In what city was Douglas Adams born?"
+    assert frame.loc[0, "reference_answers"] == "Cambridge"
+    assert frame.loc[0, "source_revision"].endswith("Q42-abc")
 
 
 def test_cmd_verdict_reads_saved_decisions(tmp_path):

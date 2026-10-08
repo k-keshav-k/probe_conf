@@ -33,6 +33,14 @@ RELATION_QIDS = {
     "place_of_birth": "P19",
     "occupation": "P106",
 }
+# Frozen question phrasing for the fresh Wikidata cohort (mirrors the few-shot
+# templates).  ``wikidata.fetch_cohort`` fills these in before the cohort job.
+RELATION_QUESTIONS = {
+    "father": "Who is the father of {subject}?",
+    "mother": "Who is the mother of {subject}?",
+    "place_of_birth": "In what city was {subject} born?",
+    "occupation": "What is {subject}'s occupation?",
+}
 POPULARITY_BINS = 5
 MISSING_POPULARITY_STRATUM = "missing"
 
@@ -207,6 +215,7 @@ def prompt_manifest() -> dict:
         "stop_strings": digest(json.dumps(STOP_STRINGS)),
         "confidence_track_a": digest(CONFIDENCE_TRACK_A),
         "confidence_track_b": digest(CONFIDENCE_TRACK_B),
+        "relation_questions": digest(json.dumps(RELATION_QUESTIONS)),
         "prompt_version": PROMPT_VERSION,
         "label_policy_version": LABEL_POLICY_VERSION,
         "match_policy_version": MATCH_POLICY_VERSION,
