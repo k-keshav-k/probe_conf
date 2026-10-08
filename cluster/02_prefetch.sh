@@ -96,9 +96,28 @@ else
   echo "Skipped. Set FETCH_WIKIDATA=1 to fetch a fresh Wikidata cohort."
 fi
 
-# Confirmatory mode requires a popularity stratum, so join the frozen pageview
-# dump here when one is supplied:  PAGEVIEW_CSV=/path/pageviews.csv
-if [ -n "${PAGEVIEW_CSV:-}" ] && [ -f "$RUN_DIR/source/wikidata_cohort.csv" ]; then
+# Confirmatory mode requires a popularity stratum.  Either supply a frozen
+# pageview table (PAGEVIEW_CSV=subject_id,popularity.csv) or fetch monthly
+# views from the Wikimedia API (FETCH_PAGEVIEWS=1).
+if [ "${FETCH_PAGEVIEWS:-0}" = "1" ] && [ -f "$RUN_DIR/source/wikidata_cohort.csv" ]; then
+  echo "== fetching monthly pageviews (can take several minutes) =="
+  python -m section33.data.pageviews \
+    --cohort "$RUN_DIR/source/wikidata_cohort.csv" \
+    --out "$RUN_DIR/source/pageviews.csv" \
+    --workers "${PAGEVIEW_WORKERS:-8}"
+  PAGEVIEW_CSV="$RUN_DIR/source/pageviews.csv"
+fi
+
+if [ -n "${PAGEVIEW_CSV:-}" ]; then
+  if [ ! -f "$PAGEVIEW_CSV" ]; then
+    echo "ERROR: PAGEVIEW_CSV not found: $PAGEVIEW_CSV" >&2
+    echo "Supply a real subject_id,popularity CSV or set FETCH_PAGEVIEWS=1." >&2
+    exit 1
+  fi
+  if [ ! -f "$RUN_DIR/source/wikidata_cohort.csv" ]; then
+    echo "ERROR: no Wikidata cohort to join; set FETCH_WIKIDATA=1 first." >&2
+    exit 1
+  fi
   echo "== joining pageviews from $PAGEVIEW_CSV =="
   python - <<PY
 import pandas as pd

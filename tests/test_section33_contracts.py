@@ -786,6 +786,9 @@ def test_wikidata_fetch_builds_question_columns(monkeypatch):
                                 "value": "http://www.wikidata.org/entity/statement/Q42-abc"
                             },
                             "valueLabel": {"value": "Cambridge"},
+                            "article": {
+                                "value": "https://en.wikipedia.org/wiki/Douglas_Adams"
+                            },
                         }
                     ]
                 }
@@ -797,6 +800,34 @@ def test_wikidata_fetch_builds_question_columns(monkeypatch):
     assert frame.loc[0, "question"] == "In what city was Douglas Adams born?"
     assert frame.loc[0, "reference_answers"] == "Cambridge"
     assert frame.loc[0, "source_revision"].endswith("Q42-abc")
+    assert frame.loc[0, "article_url"].endswith("Douglas_Adams")
+
+
+def test_pageviews_fetch_sums_monthly_items(monkeypatch):
+    import requests
+
+    from section33.data import pageviews
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"items": [{"views": 100}, {"views": 250}]}
+
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: FakeResponse())
+    assert pageviews.fetch_views("Douglas_Adams", "20250101", "20250301") == 350.0
+    assert pageviews.article_title("https://en.wikipedia.org/wiki/Douglas_Adams") == "Douglas_Adams"
+    start, end = pageviews.default_window()
+    assert start.endswith("01") and end.endswith("01")
+
+    class Missing(FakeResponse):
+        status_code = 404
+
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: Missing())
+    assert pageviews.fetch_views("Missing_Article", "20250101", "20250301") is None
 
 
 def test_cmd_verdict_reads_saved_decisions(tmp_path):
