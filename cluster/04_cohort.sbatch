@@ -68,13 +68,16 @@ else
     echo "the legacy check only (plan section 4.1), not the powered fresh cohort." >&2
     exit 1
   fi
+  PER_RELATION="${PER_RELATION:-1500}"
+  TEST_ARG=""
+  if [ -n "${TEST_SIZE:-}" ]; then TEST_ARG="--test $TEST_SIZE"; fi
   # shellcheck disable=SC2086
   srun apptainer exec --overlay "$OVERLAY:ro" "$SIF" /bin/bash -c "
     source /ext3/env.sh
     cd $REPO
     python -m section33.cli cohort --run $RUN_DIR \
         --source $RUN_DIR/source/wikidata_cohort.csv \
-        --seen $SEEN --per-relation 1500 --mode ${MODE:-pilot}
+        --seen $SEEN --per-relation $PER_RELATION $TEST_ARG --mode ${MODE:-pilot}
   "
 fi
 
