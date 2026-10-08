@@ -789,6 +789,7 @@ def test_wikidata_fetch_builds_question_columns(monkeypatch):
                             "article": {
                                 "value": "https://en.wikipedia.org/wiki/Douglas_Adams"
                             },
+                            "sitelinks": {"value": "120"},
                         }
                     ]
                 }
@@ -801,6 +802,7 @@ def test_wikidata_fetch_builds_question_columns(monkeypatch):
     assert frame.loc[0, "reference_answers"] == "Cambridge"
     assert frame.loc[0, "source_revision"].endswith("Q42-abc")
     assert frame.loc[0, "article_url"].endswith("Douglas_Adams")
+    assert frame.loc[0, "sitelinks"] == 120
 
 
 def test_pageviews_fetch_sums_monthly_items(monkeypatch):

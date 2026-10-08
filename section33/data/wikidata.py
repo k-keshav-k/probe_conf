@@ -43,7 +43,8 @@ PREFIX p: <http://www.wikidata.org/prop/>
 PREFIX ps: <http://www.wikidata.org/prop/statement/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX schema: <http://schema.org/>
-SELECT ?subject ?subjectLabel ?statement ?value ?valueLabel ?article WHERE {{
+PREFIX wikibase: <http://wikiba.se/ontology#>
+SELECT ?subject ?subjectLabel ?statement ?value ?valueLabel ?article ?sitelinks WHERE {{
   ?subject wdt:P31 wd:Q5 ;
            p:{property} ?statement .
   ?statement ps:{property} ?value .
@@ -51,6 +52,7 @@ SELECT ?subject ?subjectLabel ?statement ?value ?valueLabel ?article WHERE {{
            schema:isPartOf <https://en.wikipedia.org/> .
   ?subject rdfs:label ?subjectLabel . FILTER(LANG(?subjectLabel) = "en")
   ?value rdfs:label ?valueLabel . FILTER(LANG(?valueLabel) = "en")
+  OPTIONAL {{ ?subject wikibase:sitelinks ?sitelinks }}
 }}
 LIMIT {limit}
 OFFSET {offset}
@@ -102,6 +104,9 @@ def fetch_relation(
                 "question": template.format(subject=subject_name),
                 "statement": statement,
                 "article_url": binding.get("article", {}).get("value", ""),
+                "sitelinks": int(binding["sitelinks"]["value"])
+                if "sitelinks" in binding
+                else None,
                 "reference_answers": binding.get("valueLabel", {}).get("value", ""),
                 "source_revision": statement,
             }

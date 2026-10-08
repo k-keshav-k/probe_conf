@@ -96,9 +96,27 @@ else
   echo "Skipped. Set FETCH_WIKIDATA=1 to fetch a fresh Wikidata cohort."
 fi
 
-# Confirmatory mode requires a popularity stratum.  Either supply a frozen
-# pageview table (PAGEVIEW_CSV=subject_id,popularity.csv) or fetch monthly
-# views from the Wikimedia API (FETCH_PAGEVIEWS=1).
+# Confirmatory mode requires a popularity stratum.  Three options:
+#   POPULARITY_SOURCE=sitelinks  (fast proxy: number of Wikipedia editions)
+#   FETCH_PAGEVIEWS=1            (monthly views from the Wikimedia API)
+#   PAGEVIEW_CSV=subject_id,popularity.csv  (a frozen dump)
+if [ "${POPULARITY_SOURCE:-}" = "sitelinks" ] && [ -f "$RUN_DIR/source/wikidata_cohort.csv" ]; then
+  echo "== popularity from Wikidata sitelinks (language editions) =="
+  python - <<PY
+import pandas as pd
+
+path = "$RUN_DIR/source/wikidata_cohort.csv"
+df = pd.read_csv(path)
+if "sitelinks" not in df.columns or df["sitelinks"].isna().all():
+    raise SystemExit("no sitelinks column; refetch with FETCH_WIKIDATA=1 on the current code")
+df["popularity"] = df["sitelinks"]
+df.to_csv(path, index=False)
+print("popularity set from sitelinks:", int(df["popularity"].notna().sum()), "of", len(df))
+PY
+  FETCH_PAGEVIEWS=0
+  PAGEVIEW_CSV=""
+fi
+
 if [ "${FETCH_PAGEVIEWS:-0}" = "1" ] && [ -f "$RUN_DIR/source/wikidata_cohort.csv" ]; then
   echo "== fetching monthly pageviews (can take several minutes) =="
   python -m section33.data.pageviews \

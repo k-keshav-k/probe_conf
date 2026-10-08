@@ -47,6 +47,7 @@ def fetch_views(
     article: str,
     start: str,
     end: str,
+    session=None,
     retries: int = 3,
     backoff: float = 1.0,
 ) -> float | None:
@@ -57,7 +58,10 @@ def fetch_views(
     url = PAGEVIEW_ENDPOINT.format(article=quote(article, safe=""), start=start, end=end)
     for attempt in range(retries + 1):
         try:
-            response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
+            if session is not None:
+                response = session.get(url, timeout=30)
+            else:
+                response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
             if response.status_code == 404:
                 return None
             response.raise_for_status()
@@ -72,18 +76,34 @@ def fetch_views(
     return None
 
 
+def _session(workers: int):
+    """Connection-pooled session; reusing sockets is most of the speed-up."""
+
+    import requests
+    from requests.adapters import HTTPAdapter
+
+    session = requests.Session()
+    adapter = HTTPAdapter(pool_connections=workers, pool_maxsize=workers, max_retries=0)
+    session.mount("https://", adapter)
+    session.headers.update({"User-Agent": USER_AGENT})
+    return session
+
+
 def fetch_cohort_pageviews(
     cohort_csv: Path,
     out_csv: Path,
     start: str,
     end: str,
-    workers: int = 8,
+    workers: int = 16,
     retries: int = 3,
+    max_subjects: int | None = None,
 ) -> pd.DataFrame:
     """Fetch pageviews for every distinct subject and write the join table."""
 
     cohort = pd.read_csv(cohort_csv)
     subjects = cohort.drop_duplicates("subject_id")
+    if max_subjects is not None:
+        subjects = subjects.head(max_subjects)
     if "article_url" in subjects.columns:
         titles = subjects.set_index("subject_id")["article_url"].map(article_title)
     else:
@@ -92,14 +112,19 @@ def fetch_cohort_pageviews(
         )
     titles = titles.dropna()
 
+    session = _session(workers)
     results: dict[str, float | None] = {}
+    completed = 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
-            pool.submit(fetch_views, title, start, end, retries): subject_id
+            pool.submit(fetch_views, title, start, end, session, retries): subject_id
             for subject_id, title in titles.items()
         }
         for future in as_completed(futures):
             results[futures[future]] = future.result()
+            completed += 1
+            if completed % 500 == 0 or completed == len(futures):
+                print(f"pageviews: {completed}/{len(futures)} subjects", flush=True)
 
     frame = pd.DataFrame(
         {
@@ -122,12 +147,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, required=True, help="output subject_id,popularity CSV")
     parser.add_argument("--start", default=None, help="YYYYMMDD (default: trailing 12 months)")
     parser.add_argument("--end", default=None, help="YYYYMMDD (default: last completed month)")
-    parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--workers", type=int, default=16)
     parser.add_argument("--retries", type=int, default=3)
+    parser.add_argument("--max-subjects", type=int, default=None)
     args = parser.parse_args(argv)
     start, end = (args.start, args.end) if args.start and args.end else default_window()
     frame = fetch_cohort_pageviews(
-        args.cohort, args.out, start, end, workers=args.workers, retries=args.retries
+        args.cohort,
+        args.out,
+        start,
+        end,
+        workers=args.workers,
+        retries=args.retries,
+        max_subjects=args.max_subjects,
     )
     print(
         f"wrote {args.out}: {int(frame['popularity'].notna().sum())} of {len(frame)} subjects "
