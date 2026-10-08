@@ -37,6 +37,12 @@ WIKIDATA_ENDPOINT = os.environ.get(
 USER_AGENT = "section33-cohort/0.1 (research; contact: local user)"
 
 QUERY_TEMPLATE = """
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX p: <http://www.wikidata.org/prop/>
+PREFIX ps: <http://www.wikidata.org/prop/statement/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX schema: <http://schema.org/>
 SELECT ?subject ?subjectLabel ?statement ?value ?valueLabel WHERE {{
   ?subject wdt:P31 wd:Q5 ;
            p:{property} ?statement .
