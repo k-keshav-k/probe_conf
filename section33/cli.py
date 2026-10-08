@@ -606,6 +606,67 @@ def cmd_evaluate(args) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# verdict: plain-language answer to the section 3.3 question
+# ---------------------------------------------------------------------------
+_VERDICT_PHRASES = {
+    "useful_improvement_supported": "yes: the MLP features add a useful improvement",
+    "useful_improvement_ruled_out": "no: a useful MLP improvement is ruled out at the margin",
+    "harm_supported": "no: the MLP features hurt",
+    "inconclusive": "inconclusive: this run cannot answer it",
+}
+
+
+def cmd_verdict(args) -> dict:
+    """Print the section 3.3 answer from the saved decision files.
+
+    Section 3.3 asks whether a probe over MLP interaction features adds useful
+    confidence signal beyond internal signals.  The primary verdict compares
+    B+M against B (metadata + probability + hidden states); the secondary
+    ``mlp_minus_hidden`` comparison isolates MLP features against hidden states.
+    """
+
+    paths = run_paths(args.run)
+    slug = _slug(args.model)
+    report = {}
+    print("section 3.3: do MLP interaction features add useful confidence signal")
+    print("beyond internal signals (hidden states / probability / metadata)?\n")
+    for track in ("A", "B"):
+        decision_path = paths["evaluation"] / f"decision__{slug}__track{track}.json"
+        label = "before answer" if track == "A" else "after answer"
+        if not decision_path.exists():
+            print(f"Track {track} ({label}): not evaluated yet ({decision_path.name})")
+            report[track] = {"status": "not evaluated"}
+            continue
+        payload = json.loads(decision_path.read_text())
+        primary = payload["decision"]
+        mlp_vs_hidden = payload.get("secondary", {}).get("mlp_minus_hidden", {})
+        within = (payload.get("within_question") or {}).get("decision", {}).get("verdict")
+        print(f"Track {track} ({label}):")
+        print(
+            f"  B+M vs B:           {primary['verdict']}  "
+            f"(dAUC {primary['delta_auc']:+.4f}, CI "
+            f"[{primary['delta_auc_interval'][0]:+.4f}, {primary['delta_auc_interval'][1]:+.4f}])"
+        )
+        if mlp_vs_hidden:
+            print(
+                f"  MLP-only vs hidden: {mlp_vs_hidden.get('decision', {}).get('verdict', 'n/a')}  "
+                f"(dAUC {mlp_vs_hidden['delta_auc']:+.4f})"
+            )
+        if within:
+            print(f"  within-question:    {within}")
+        print(f"  answer: {_VERDICT_PHRASES.get(primary['verdict'], primary['verdict'])}\n")
+        report[track] = {
+            "primary_verdict": primary["verdict"],
+            "primary_delta_auc": primary["delta_auc"],
+            "primary_interval": primary["delta_auc_interval"],
+            "mlp_vs_hidden": mlp_vs_hidden.get("decision", {}).get("verdict"),
+            "mlp_vs_hidden_delta_auc": mlp_vs_hidden.get("delta_auc"),
+            "within_question": within,
+        }
+    return report
+
+
+# ---------------------------------------------------------------------------
 # audit
 # ---------------------------------------------------------------------------
 def cmd_audit(args) -> dict:
@@ -722,6 +783,13 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--track", choices=["A", "B"], default="A")
     evaluate.add_argument("--seed", type=int, default=0)
     evaluate.set_defaults(func=cmd_evaluate)
+
+    verdict = sub.add_parser(
+        "verdict", help="print the section 3.3 answer from the saved decisions"
+    )
+    verdict.add_argument("--run", type=Path, default=None)
+    verdict.add_argument("--model", required=True)
+    verdict.set_defaults(func=cmd_verdict)
 
     audit = sub.add_parser("audit", help="check schemas and reference exclusion")
     audit.add_argument("--run", type=Path, default=None)

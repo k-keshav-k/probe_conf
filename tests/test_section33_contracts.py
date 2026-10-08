@@ -739,6 +739,38 @@ def test_bootstrap_p_value():
     assert bootstrap_p_value([-0.1, 0.1, 0.0]) == pytest.approx(1.0)
 
 
+def test_cmd_verdict_reads_saved_decisions(tmp_path):
+    from types import SimpleNamespace
+
+    from section33.cli import cmd_verdict
+    from section33.config import run_paths
+
+    paths = run_paths(tmp_path)
+    (tmp_path / "evaluation").mkdir(parents=True, exist_ok=True)
+    payload = {
+        "decision": {
+            "verdict": "inconclusive",
+            "delta_auc": 0.02,
+            "delta_auc_interval": [-0.01, 0.05],
+        },
+        "secondary": {
+            "mlp_minus_hidden": {
+                "decision": {"verdict": "equivalence_not_established"},
+                "delta_auc": 0.01,
+            }
+        },
+        "within_question": {"decision": {"verdict": "within_question_inconclusive"}},
+    }
+    for track in ("A", "B"):
+        (paths["evaluation"] / f"decision__stub__track{track}.json").write_text(
+            json.dumps(payload)
+        )
+    report = cmd_verdict(SimpleNamespace(run=tmp_path, model="stub"))
+    assert report["A"]["primary_verdict"] == "inconclusive"
+    assert report["A"]["mlp_vs_hidden"] == "equivalence_not_established"
+    assert report["B"]["within_question"] == "within_question_inconclusive"
+
+
 def test_cmd_evaluate_end_to_end(tmp_path, monkeypatch):
     """The frozen evaluation path runs, uses multiplicity, and writes every claim."""
 
