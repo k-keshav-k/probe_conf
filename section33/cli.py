@@ -290,9 +290,21 @@ def cmd_develop(args) -> dict:
         dev["score_B_plus_M"] = predictions[comparison_key]
         auc_deltas, brier_deltas = _subject_deltas(dev, "score_B_plus_M", "score_B")
         variance = development_variance(auc_deltas, brier_deltas, seed=args.seed)
-        power = power_table(variance["sd_auc"], variance["sd_brier"], correlation=variance["corr"])
-        write_json(paths["protocol"] / f"power__{slug}__track{args.track}.json", power)
-        log(f"development variance: sd_auc={variance['sd_auc']:.4f}, sd_brier={variance['sd_brier']:.4f}")
+        if not (np.isfinite(variance["sd_auc"]) and np.isfinite(variance["sd_brier"])):
+            log(
+                "development variance is not estimable (one question per subject "
+                "leaves no per-subject AUC deltas); skipping the power table"
+            )
+        else:
+            correlation = variance["corr"] if np.isfinite(variance["corr"]) else 0.8
+            power = power_table(
+                variance["sd_auc"], variance["sd_brier"], correlation=correlation
+            )
+            write_json(paths["protocol"] / f"power__{slug}__track{args.track}.json", power)
+            log(
+                f"development variance: sd_auc={variance['sd_auc']:.4f}, "
+                f"sd_brier={variance['sd_brier']:.4f}"
+            )
     return selection
 
 
@@ -449,6 +461,8 @@ def cmd_audit(args) -> dict:
     if report["checks"]["protocol_hash"] == "missing":
         report["passed"] = False
     write_json(paths["evaluation"] / "audit.json", report)
+    if not report["passed"]:
+        raise SystemExit(f"audit failed; see {paths['evaluation'] / 'audit.json'}")
     return report
 
 

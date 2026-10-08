@@ -34,6 +34,7 @@ MODEL="${MODEL:-$PRIMARY_MODEL}"
 
 module purge
 srun apptainer exec --overlay "$OVERLAY:ro" "$SIF" /bin/bash -c "
+  set -e
   source /ext3/env.sh
   export OMP_NUM_THREADS=\$SLURM_CPUS_PER_TASK
   cd $REPO

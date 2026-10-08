@@ -75,6 +75,15 @@ def development_variance(
 
     deltas_auc = np.asarray(deltas_auc, dtype=float)
     deltas_brier = np.asarray(deltas_brier, dtype=float)
+    if len(deltas_auc) < 2 or len(deltas_brier) < 2:
+        # Not enough per-subject deltas to estimate a variance (for example a
+        # cohort with one question per subject has no per-subject AUC deltas).
+        return {
+            "sd_auc": float("nan"),
+            "sd_brier": float("nan"),
+            "corr": 0.0,
+            "n_subjects": int(min(len(deltas_auc), len(deltas_brier))),
+        }
     rng = np.random.default_rng(seed)
     auc_values, brier_values = [], []
     for _ in range(n_boot):

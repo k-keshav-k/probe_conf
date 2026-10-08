@@ -106,7 +106,10 @@ class BlockPreprocessor:
         self.scaler = StandardScaler().fit(x)
         x = self.scaler.transform(x).astype(np.float32)
         if self.pca_dim is not None and x.shape[1] > self.pca_dim:
-            self.pca = PCA(n_components=self.pca_dim, random_state=0).fit(x)
+            # PCA's full solver requires n_components <= min(n_samples, n_features).
+            # Small development folds can be shorter than the component budget.
+            n_components = min(self.pca_dim, x.shape[0])
+            self.pca = PCA(n_components=n_components, random_state=0).fit(x)
         return self
 
     def transform(self, x: np.ndarray) -> np.ndarray:
