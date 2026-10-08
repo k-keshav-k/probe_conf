@@ -159,7 +159,13 @@ def cmd_cohort(args) -> dict:
 def cmd_collect(args) -> dict:
     paths = run_paths(args.run)
     ensure_dirs(paths)
-    cohort = pd.read_parquet(paths["manifests"] / "cohort.parquet")
+    cohort_path = paths["manifests"] / "cohort.parquet"
+    if not cohort_path.exists():
+        raise SystemExit(
+            f"cohort manifest not found: {cohort_path}.  "
+            "Run cluster/04_cohort.sbatch before collecting."
+        )
+    cohort = pd.read_parquet(cohort_path)
     if args.shards < 1:
         raise SystemExit("--shards must be >= 1")
     if args.shards > 1 and args.shard is None:

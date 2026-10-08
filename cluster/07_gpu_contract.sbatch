@@ -37,5 +37,6 @@ srun apptainer exec --nv --overlay "$OVERLAY:ro" "$SIF" /bin/bash -c "
   source /ext3/env.sh
   export HF_HOME=$HF_HOME
   cd $REPO
+  export PYTHONPATH=$REPO
   python cluster/check_contract.py --model $MODEL
 "

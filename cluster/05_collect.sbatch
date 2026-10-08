@@ -45,6 +45,13 @@ SHARDS="${SHARDS:-1}"
 MODEL="${MODEL:-$PRIMARY_MODEL}"
 LIMIT="${LIMIT:-}"
 
+if [ ! -f "$RUN_DIR/manifests/cohort.parquet" ]; then
+  echo "ERROR: cohort manifest not found: $RUN_DIR/manifests/cohort.parquet" >&2
+  echo "Build the cohort first (cluster/README.md section 6):" >&2
+  echo "  sbatch --account=\"\$TORCH_ACCOUNT\" --chdir=\"\$REPO\" ... cluster/04_cohort.sbatch" >&2
+  exit 1
+fi
+
 if [ "$SHARDS" -gt 1 ] && [ -z "${SLURM_ARRAY_TASK_ID:-}" ]; then
   echo "ERROR: SHARDS=$SHARDS requires a Slurm job array: --array=0-$((SHARDS - 1))" >&2
   exit 1
