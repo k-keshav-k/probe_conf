@@ -1,0 +1,30 @@
+{
+  "A": {
+    "stated confidence": {
+      "auroc_low_popularity": 0.5768172752905577,
+      "auroc_high_popularity": 0.6058547537491725
+    },
+    "B": {
+      "auroc_low_popularity": 0.9500034385530569,
+      "auroc_high_popularity": 0.8534872341037967
+    },
+    "B+M": {
+      "auroc_low_popularity": 0.9693281067326869,
+      "auroc_high_popularity": 0.8552143001065023
+    }
+  },
+  "B": {
+    "stated confidence": {
+      "auroc_low_popularity": 0.5352637380049835,
+      "auroc_high_popularity": 0.592635878311635
+    },
+    "B": {
+      "auroc_low_popularity": 0.9710511851218554,
+      "auroc_high_popularity": 0.8994804480503544
+    },
+    "B+M": {
+      "auroc_low_popularity": 0.9671368614483812,
+      "auroc_high_popularity": 0.8990295859739472
+    }
+  }
+}
