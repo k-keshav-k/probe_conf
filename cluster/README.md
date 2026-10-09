@@ -280,6 +280,8 @@ Facts that shape the scripts:
 | `03_smoke.sbatch` | Unit tests and small-model end-to-end smoke (1 GPU) |
 | `04_cohort.sbatch` | Build the cohort and split manifest (CPU) |
 | `05_collect.sbatch` | Sharded collection for one track/split (1 GPU per array task) |
+| `05_collect_all.sbatch` | One resumable GPU job collecting every track and split (no sharding; used by `run_confirmatory.sh`) |
+| `run_confirmatory.sh` | Submit the whole confirmatory pipeline as one dependency-chained DAG |
 | `06_evaluate.sbatch` | Development selection, calibration, final evaluation (CPU) |
 | `07_gpu_contract.sbatch` | Bias/reconstruction/feature gate for the real model (1 GPU) |
 | `check_contract.py` | Python helper for `07_gpu_contract.sbatch` |

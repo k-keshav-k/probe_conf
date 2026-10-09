@@ -8,15 +8,18 @@
 #   bash cluster/run_confirmatory.sh
 #
 # Stages, chained with afterok dependencies (a failure cancels the rest):
-#   setup -> prefetch -> cohort -> smoke/contract gates -> collect Track A ->
-#   collect Track B -> develop+evaluate+audit -> verdict
+#   setup -> prefetch -> cohort -> smoke/contract gates -> collect (one job,
+#   every track and split) -> develop+evaluate+audit -> verdict
+#
+# Collection is a single resumable job with no sharding: one writer per file.
+# If it is preempted or hits the wall time, resubmit and it resumes.
 #
 # Env knobs (defaults in brackets):
 #   TEST_SIZE [4000]               final test subjects (must match the protocol)
 #   PER_RELATION [1900]            source pool per relation; default is
 #                                  (train + dev + calibration + test) / 4
 #   TRAIN [2000] DEV [800] CAL [800]
-#   SHARDS [4]                     collection shards per split
+#   BATCH [4]                      questions per collection batch
 #   FETCH [1]                      1 = refetch the Wikidata source and models
 #   POPULARITY_SOURCE [sitelinks]  sitelinks | pageviews | none
 #   REPLICATION [0]                1 = run the replication model after the primary
@@ -40,7 +43,7 @@ DEV="${DEV:-800}"
 CAL="${CAL:-800}"
 TEST_SIZE="${TEST_SIZE:-4000}"
 PER_RELATION="${PER_RELATION:-$(( (TRAIN + DEV + CAL + TEST_SIZE) / 4 ))}"
-SHARDS="${SHARDS:-4}"
+BATCH="${BATCH:-4}"
 FETCH="${FETCH:-1}"
 POPULARITY_SOURCE="${POPULARITY_SOURCE:-sitelinks}"
 REPLICATION="${REPLICATION:-0}"
@@ -59,7 +62,7 @@ echo "== section33 confirmatory pipeline =="
 echo "run root:     $RUN_DIR"
 echo "sizes:        train=$TRAIN dev=$DEV calibration=$CAL test=$TEST_SIZE"
 echo "per relation: $PER_RELATION (pool $((4 * PER_RELATION)))"
-echo "shards:       $SHARDS"
+echo "batch:        $BATCH"
 echo "model:        $MODEL"
 echo "replication:  $REPLICATION"
 echo
@@ -97,21 +100,11 @@ GATE_CONTRACT=$(sbatch --parsable --account="$TORCH_ACCOUNT" --chdir="$REPO" \
   --export=ALL,MODEL="$MODEL" cluster/07_gpu_contract.sbatch)
 GATES="$GATE_SMOKE:$GATE_CONTRACT"
 
-submit_collect() {  # $1=track $2=dependency list $3=model
-  local track="$1" dependency="$2" model="$3" jobs=() split
-  for split in train dev calibration test; do
-    jobs+=("$(sbatch --parsable --account="$TORCH_ACCOUNT" --chdir="$REPO" \
-      --dependency="afterok:$dependency" --array="0-$((SHARDS - 1))" \
-      --export=ALL,TRACK="$track",SPLIT="$split",SHARDS="$SHARDS",MODEL="$model" \
-      cluster/05_collect.sbatch)")
-  done
-  (IFS=:; echo "${jobs[*]}")
-}
-
-COLLECT_A=$(submit_collect A "$COHORT:$GATES" "$MODEL")
-COLLECT_B=$(submit_collect B "$COLLECT_A" "$MODEL")
+COLLECT=$(sbatch --parsable --account="$TORCH_ACCOUNT" --chdir="$REPO" \
+  --dependency="afterok:$COHORT:$GATES" --export=ALL,MODEL="$MODEL",BATCH="$BATCH" \
+  cluster/05_collect_all.sbatch)
 EVALUATE=$(sbatch --parsable --account="$TORCH_ACCOUNT" --chdir="$REPO" \
-  --dependency="afterok:$COLLECT_B" --export=ALL,MODEL="$MODEL" \
+  --dependency="afterok:$COLLECT" --export=ALL,MODEL="$MODEL" \
   cluster/06_evaluate.sbatch)
 VERDICT=$(sbatch --parsable --account="$TORCH_ACCOUNT" --chdir="$REPO" \
   --dependency="afterok:$EVALUATE" --export=ALL,MODEL="$MODEL" \
@@ -120,38 +113,37 @@ VERDICT=$(sbatch --parsable --account="$TORCH_ACCOUNT" --chdir="$REPO" \
 echo
 echo "cohort:     $COHORT"
 echo "gates:      $GATE_SMOKE (smoke)  $GATE_CONTRACT (contract)"
-echo "collect A:  $COLLECT_A"
-echo "collect B:  $COLLECT_B"
+echo "collect:    $COLLECT (one job, all tracks and splits)"
 echo "evaluate:   $EVALUATE"
 echo "verdict:    $VERDICT"
 
 if [ "$REPLICATION" = "1" ]; then
-  COLLECT_RA=$(submit_collect A "$VERDICT" "$REPLICATION_MODEL")
-  COLLECT_RB=$(submit_collect B "$COLLECT_RA" "$REPLICATION_MODEL")
+  COLLECT_R=$(sbatch --parsable --account="$TORCH_ACCOUNT" --chdir="$REPO" \
+    --dependency="afterok:$VERDICT" --export=ALL,MODEL="$REPLICATION_MODEL",BATCH="$BATCH" \
+    cluster/05_collect_all.sbatch)
   EVALUATE_R=$(sbatch --parsable --account="$TORCH_ACCOUNT" --chdir="$REPO" \
-    --dependency="afterok:$COLLECT_RB" --export=ALL,MODEL="$REPLICATION_MODEL" \
+    --dependency="afterok:$COLLECT_R" --export=ALL,MODEL="$REPLICATION_MODEL" \
     cluster/06_evaluate.sbatch)
   VERDICT_R=$(sbatch --parsable --account="$TORCH_ACCOUNT" --chdir="$REPO" \
     --dependency="afterok:$EVALUATE_R" --export=ALL,MODEL="$REPLICATION_MODEL" \
     cluster/08_verdict.sbatch)
-  echo "replication collect A: $COLLECT_RA"
-  echo "replication collect B: $COLLECT_RB"
-  echo "replication evaluate:  $EVALUATE_R"
-  echo "replication verdict:   $VERDICT_R"
+  echo "replication collect:  $COLLECT_R"
+  echo "replication evaluate: $EVALUATE_R"
+  echo "replication verdict:  $VERDICT_R"
 fi
 
 mkdir -p "$RUN_DIR/report" 2>/dev/null || true
 {
   echo "submitted $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo "test_size=$TEST_SIZE per_relation=$PER_RELATION shards=$SHARDS"
+  echo "test_size=$TEST_SIZE per_relation=$PER_RELATION batch=$BATCH"
   echo "model=$MODEL replication=$REPLICATION"
   echo "cohort=$COHORT gates=$GATES"
-  echo "collect_a=$COLLECT_A"
-  echo "collect_b=$COLLECT_B"
+  echo "collect=$COLLECT"
   echo "evaluate=$EVALUATE verdict=$VERDICT"
 } > "$RUN_DIR/report/pipeline_jobs.txt" 2>/dev/null || true
 
 echo
 echo "watch:            squeue --me"
+echo "collect output:   s33-collect-all-$COLLECT.out"
 echo "primary verdict:  s33-verdict-$VERDICT.out"
 echo "job record:       $RUN_DIR/report/pipeline_jobs.txt"
