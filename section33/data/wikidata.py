@@ -23,6 +23,7 @@ Service's transient 429/5xx responses.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
@@ -82,9 +83,9 @@ def fetch_relation(
                 timeout=120,
             )
             response.raise_for_status()
-            payload = response.json()
+            payload = json.loads(response.text, strict=False)
             break
-        except requests.RequestException:
+        except (requests.RequestException, ValueError):
             if attempt == retries:
                 raise
             time.sleep(backoff * (2**attempt))
@@ -114,14 +115,36 @@ def fetch_relation(
     return pd.DataFrame(rows)
 
 
+def _fetch_page(relation: str, offset: int, limit: int, endpoint: str):
+    """Fetch one page, halving the page size when a response is unusable.
+
+    The Query Service occasionally returns truncated JSON for large pages at
+    deep offsets; smaller pages at the same offset are reliable.
+    """
+
+    while True:
+        try:
+            page = fetch_relation(relation, limit=limit, offset=offset, endpoint=endpoint)
+            return page, limit
+        except (OSError, ValueError):
+            if limit <= 200:
+                raise
+            limit //= 2
+
+
 def fetch_cohort(
     out_path: Path,
     relations: tuple[str, ...] | None = None,
-    per_relation: int = 3000,
-    page_size: int = 2000,
+    per_relation: int = 10_000,
+    page_size: int = 1000,
     endpoint: str = WIKIDATA_ENDPOINT,
 ) -> Path:
-    """Fetch the requested relations in pages and write a CSV cohort table."""
+    """Fetch the requested relations in pages and write a CSV cohort table.
+
+    Small pages avoid the Query Service truncating large deep-offset responses;
+    the row target is generous because several statements can share one subject
+    (occupation especially), so unique-subject counts are lower than row counts.
+    """
 
     relations = relations or tuple(RELATION_QIDS)
     frames = []
@@ -130,14 +153,15 @@ def fetch_cohort(
         collected = 0
         offset = 0
         while collected < per_relation:
-            page = fetch_relation(relation, limit=page_size, offset=offset, endpoint=endpoint)
+            page, step = _fetch_page(relation, offset, page_size, endpoint)
             if page.empty:
                 break
             chunks.append(page)
             collected += len(page)
-            if len(page) < page_size:
+            print(f"{relation}: {collected} rows fetched", flush=True)
+            if len(page) < step:
                 break
-            offset += page_size
+            offset += step
         frames.append(pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame())
     combined = pd.concat(frames, ignore_index=True)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -188,11 +212,11 @@ def fetch_sitelinks(
                     timeout=60,
                 )
                 response.raise_for_status()
-                for binding in response.json()["results"]["bindings"]:
+                for binding in json.loads(response.text, strict=False)["results"]["bindings"]:
                     qid = binding["subject"]["value"].rsplit("/", 1)[-1]
                     result[qid] = float(binding["sitelinks"]["value"])
                 break
-            except requests.RequestException:
+            except (requests.RequestException, ValueError):
                 if attempt == retries:
                     raise
                 time.sleep(backoff * (2**attempt))
@@ -248,8 +272,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, required=True, help="output CSV path")
     parser.add_argument("--relations", nargs="*", default=None)
     parser.add_argument(
-        "--per-relation", type=int, default=3000,
-        help="target rows per relation (paged, with retries)",
+        "--per-relation", type=int, default=10_000,
+        help="target rows per relation (paged; unique subjects are fewer)",
     )
     parser.add_argument(
         "--endpoint", default=WIKIDATA_ENDPOINT,

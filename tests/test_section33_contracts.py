@@ -795,6 +795,10 @@ def test_wikidata_fetch_builds_question_columns(monkeypatch):
                 }
             }
 
+        @property
+        def text(self):
+            return json.dumps(self.json())
+
     monkeypatch.setattr(requests, "get", lambda *args, **kwargs: FakeResponse())
     frame = wikidata.fetch_relation("place_of_birth", limit=1)
     assert frame.loc[0, "question_id"] == "Q42-abc"

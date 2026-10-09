@@ -91,7 +91,8 @@ PY
 
 echo "== optional: fresh Wikidata cohort (needs network) =="
 if [ "${FETCH_WIKIDATA:-0}" = "1" ]; then
-  python -m section33.data.wikidata --out "$RUN_DIR/source/wikidata_cohort.csv"
+  python -m section33.data.wikidata --out "$RUN_DIR/source/wikidata_cohort.csv" \
+      --per-relation "${WIKIDATA_PER_RELATION:-10000}"
 else
   echo "Skipped. Set FETCH_WIKIDATA=1 to fetch a fresh Wikidata cohort."
 fi

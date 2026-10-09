@@ -69,7 +69,7 @@ def fetch_views(
             if not items:
                 return None
             return float(sum(item.get("views", 0) for item in items))
-        except requests.RequestException:
+        except (requests.RequestException, ValueError):
             if attempt == retries:
                 return None
             time.sleep(backoff * (2**attempt))
