@@ -18,6 +18,7 @@ import errno
 import json
 import os
 import re
+import socket
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -129,7 +130,8 @@ def _acquire_shard_lock(path: Path) -> int | None:
 
     Returns the lock file descriptor (held for the process lifetime) or None
     when the filesystem does not support advisory locks.  A duplicate
-    submission fails fast instead of corrupting the shard.
+    submission fails fast instead of corrupting the shard, and the lock file
+    records the holding host and process for diagnosis.
     """
 
     try:
@@ -142,6 +144,11 @@ def _acquire_shard_lock(path: Path) -> int | None:
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as error:
+        holder = ""
+        try:
+            holder = os.read(fd, 128).decode(errors="replace").strip()
+        except OSError:
+            pass
         os.close(fd)
         if getattr(error, "errno", None) in (
             errno.EOPNOTSUPP,
@@ -151,9 +158,12 @@ def _acquire_shard_lock(path: Path) -> int | None:
         ):
             return None
         raise SystemExit(
-            f"another collector already writes {path.name}; cancel duplicate "
-            "jobs before resubmitting"
+            f"another collector already writes {path.name}"
+            + (f" (held by {holder})" if holder else "")
+            + "; cancel duplicate jobs before resubmitting"
         ) from error
+    os.ftruncate(fd, 0)
+    os.write(fd, f"{socket.gethostname()}:{os.getpid()}\n".encode())
     return fd
 
 
