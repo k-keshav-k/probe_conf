@@ -98,27 +98,94 @@ def candidate_key(model: str, revision: str, token_ids: list[int]) -> str:
     return sha256_text(json.dumps([model, revision, list(token_ids)]))[:16]
 
 
-def _question_ids(path: Path) -> set[str]:
-    if not path.exists():
-        return set()
-    return {row["question_id"] for row in read_jsonl(path)}
+def _clean_jsonl(path: Path, keep: set[str]) -> int:
+    """Rewrite a jsonl file without incomplete questions or corrupt lines.
 
-
-def _drop_incomplete_questions(path: Path, keep: set[str]) -> int:
-    """Rewrite a jsonl file without rows for questions missing from any interface."""
+    A killed job can leave a truncated final line; those lines are dropped
+    rather than crashing the resume read.
+    """
 
     if not path.exists():
         return 0
-    rows = read_jsonl(path)
-    kept = [row for row in rows if row["question_id"] in keep]
-    if len(kept) == len(rows):
-        return 0
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w") as handle:
-        for row in kept:
-            handle.write(json.dumps(row) + "\n")
-    os.replace(tmp, path)
-    return len(rows) - len(kept)
+    kept: list[dict] = []
+    dropped = 0
+    with path.open() as handle:
+        for line in handle:
+            if not line.strip():
+                dropped += 1
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                dropped += 1
+                continue
+            if row.get("question_id") in keep:
+                kept.append(row)
+            else:
+                dropped += 1
+    if dropped:
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        with tmp.open("w") as handle:
+            for row in kept:
+                handle.write(json.dumps(row) + "\n")
+        os.replace(tmp, path)
+    return dropped
+
+
+def _complete_question_ids(
+    labels_path: Path,
+    conf_path: Path,
+    feat_path: Path,
+    track: str,
+    expected_samples: int,
+) -> set[str]:
+    """Question IDs with fully consistent label, confidence, and feature records.
+
+    Presence of a question ID is not enough: a killed job can leave only part
+    of a question's rows.  Track A needs one row in each interface; Track B
+    needs the full multiplicity in labels, one confidence row per candidate,
+    and two feature rows (positions) per candidate.
+    """
+
+    labels = read_jsonl(labels_path, skip_invalid=True) if labels_path.exists() else []
+    confidence = read_jsonl(conf_path, skip_invalid=True) if conf_path.exists() else []
+    features = read_jsonl(feat_path, skip_invalid=True) if feat_path.exists() else []
+
+    if track.upper() == "A":
+        label_ids = {row["question_id"] for row in labels if "question_id" in row}
+        conf_ids = {row["question_id"] for row in confidence if "question_id" in row}
+        feat_ids = {row["question_id"] for row in features if "question_id" in row}
+        return label_ids & conf_ids & feat_ids
+
+    label_counts: dict[str, int] = {}
+    multiplicity: dict[str, int] = {}
+    for row in labels:
+        question = row.get("question_id")
+        if question is None:
+            continue
+        label_counts[question] = label_counts.get(question, 0) + 1
+        multiplicity[question] = multiplicity.get(question, 0) + int(row.get("multiplicity", 1) or 1)
+    conf_counts: dict[str, int] = {}
+    for row in confidence:
+        question = row.get("question_id")
+        if question is not None:
+            conf_counts[question] = conf_counts.get(question, 0) + 1
+    feat_counts: dict[str, int] = {}
+    for row in features:
+        question = row.get("question_id")
+        if question is not None:
+            feat_counts[question] = feat_counts.get(question, 0) + 1
+
+    complete: set[str] = set()
+    for question, n_labels in label_counts.items():
+        if multiplicity.get(question) != expected_samples:
+            continue
+        if conf_counts.get(question, 0) != n_labels:
+            continue
+        if feat_counts.get(question, 0) != 2 * n_labels:
+            continue
+        complete.add(question)
+    return complete
 
 
 # ---------------------------------------------------------------------------
@@ -374,9 +441,9 @@ def collect_track_a(
 
     done = set()
     if settings.resume:
-        done = _question_ids(labels_path) & _question_ids(conf_path) & _question_ids(feat_path)
+        done = _complete_question_ids(labels_path, conf_path, feat_path, "A", 1)
         for path in (labels_path, conf_path, feat_path):
-            _drop_incomplete_questions(path, done)
+            _clean_jsonl(path, done)
     todo = [q for q in questions if q.question_id not in done]
     if settings.max_questions:
         todo = todo[: settings.max_questions]
@@ -496,9 +563,11 @@ def collect_track_b(
 
     done = set()
     if settings.resume:
-        done = _question_ids(labels_path) & _question_ids(conf_path) & _question_ids(feat_path)
+        done = _complete_question_ids(
+            labels_path, conf_path, feat_path, "B", settings.track_b_samples
+        )
         for path in (labels_path, conf_path, feat_path):
-            _drop_incomplete_questions(path, done)
+            _clean_jsonl(path, done)
     todo = [q for q in questions if q.question_id not in done]
     if settings.max_questions:
         todo = todo[: settings.max_questions]

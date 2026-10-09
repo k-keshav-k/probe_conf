@@ -495,6 +495,31 @@ def test_verify_mlp_contract_relative_tolerance(tiny_model, monkeypatch):
     assert report["reconstruction"]["max_relative_error"] > 0.1
 
 
+def test_resume_drops_corrupt_lines_and_incomplete_questions(tmp_path):
+    from section33.models.collect import _clean_jsonl, _complete_question_ids
+
+    labels = tmp_path / "labels.jsonl"
+    conf = tmp_path / "conf.jsonl"
+    feat = tmp_path / "feat.jsonl"
+    labels.write_text(
+        json.dumps({"question_id": "q1", "multiplicity": 8}) + "\n"
+        + json.dumps({"question_id": "q2", "multiplicity": 8}) + "\n"
+    )
+    conf.write_text(json.dumps({"question_id": "q1"}) + "\n")
+    feat.write_text(
+        json.dumps({"question_id": "q1", "position": "answer_last_content"}) + "\n"
+        + json.dumps({"question_id": "q1", "position": "last_prompt"}) + "\n"
+        + json.dumps({"question_id": "q2", "position": "answer_last_content"}) + "\n"
+        + '{"question_id": "q3", "trunc'
+    )
+    done = _complete_question_ids(labels, conf, feat, "B", 8)
+    assert done == {"q1"}, "partial questions and corrupt lines must not count as done"
+    _clean_jsonl(feat, done)
+    rows = [json.loads(line) for line in feat.read_text().splitlines()]
+    assert len(rows) == 2
+    assert all(row["question_id"] == "q1" for row in rows)
+
+
 def test_calibration_method_selection():
     frame = _synthetic_frame(seed=1)
     scores = np.clip(frame["f__hiddenproj__post__last_prompt__l0__k0"].to_numpy() * 0.2 + 0.5, 0, 1)

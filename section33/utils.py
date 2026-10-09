@@ -61,17 +61,27 @@ def read_json(path: Path):
 
 def append_jsonl(path: Path, rows: Iterable[dict]) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
-    count = 0
+    payload = "".join(json.dumps(row, default=_json_default) + "\n" for row in rows)
+    if not payload:
+        return 0
     with open(path, "a") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, default=_json_default) + "\n")
-            count += 1
-    return count
+        handle.write(payload)
+        handle.flush()
+    return payload.count("\n")
 
 
-def read_jsonl(path: Path) -> list[dict]:
+def read_jsonl(path: Path, skip_invalid: bool = False) -> list[dict]:
+    rows = []
     with open(path) as handle:
-        return [json.loads(line) for line in handle if line.strip()]
+        for line in handle:
+            if not line.strip():
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                if not skip_invalid:
+                    raise
+    return rows
 
 
 def _json_default(obj):
