@@ -535,6 +535,54 @@ def test_shard_lock_rejects_duplicate_collector(tmp_path):
         os.close(first)
 
 
+def test_load_split_prefers_untagged_and_filters_to_cohort(tmp_path):
+    from section33.config import run_paths
+
+    paths = run_paths(tmp_path)
+    for folder in ("labels", "features", "manifests"):
+        (tmp_path / folder).mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"question_id": ["q_new"]}).to_parquet(
+        tmp_path / "manifests" / "cohort.parquet", index=False
+    )
+
+    def label_row(qid):
+        return {
+            "model": "stub", "revision": "stub", "subject_id": "s", "question_id": qid,
+            "split": "test", "track": "B", "answer_index": 0, "generation_seed": 0,
+            "candidate_key": "k", "candidate_text": "x", "label": 1,
+            "label_policy_version": "t", "reference_answers": ["x"], "empty": False,
+            "truncated": False, "refusal": False, "exception": None, "multiplicity": 8,
+            "relation": "father", "popularity": 1.0, "stratum": "0",
+        }
+
+    def feature_row(qid, position):
+        return {
+            "model": "stub", "revision": "stub", "subject_id": "s", "question_id": qid,
+            "split": "test", "track": "B", "answer_index": 0, "generation_seed": 0,
+            "candidate_key": "k", "candidate_token_ids": [1], "position": position,
+            "content_length": 1, "feature_spec_version": "t", "multiplicity": 8,
+            "f__prob__top1__answer_last_content": 0.5,
+        }
+
+    (tmp_path / "labels" / "trackB_answers__stub.jsonl").write_text(
+        json.dumps(label_row("q_new")) + "\n" + json.dumps(label_row("q_foreign")) + "\n"
+    )
+    (tmp_path / "features" / "trackB_features__stub.jsonl").write_text(
+        json.dumps(feature_row("q_new", "answer_last_content")) + "\n"
+        + json.dumps(feature_row("q_foreign", "answer_last_content")) + "\n"
+    )
+    # Stale shard files from an earlier attempt must be ignored, not merged.
+    (tmp_path / "labels" / "trackB_answers__stub__shard0of4.jsonl").write_text(
+        json.dumps(label_row("q_old")) + "\n"
+    )
+    (tmp_path / "features" / "trackB_features__stub__shard0of4.jsonl").write_text(
+        json.dumps(feature_row("q_old", "answer_last_content")) + "\n"
+    )
+
+    frame = load_split(paths, "stub", "B", splits=("test",))
+    assert set(frame["question_id"]) == {"q_new"}
+
+
 def test_calibration_method_selection():
     frame = _synthetic_frame(seed=1)
     scores = np.clip(frame["f__hiddenproj__post__last_prompt__l0__k0"].to_numpy() * 0.2 + 0.5, 0, 1)

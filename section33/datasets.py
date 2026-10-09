@@ -37,6 +37,23 @@ def _dedupe(frame: pd.DataFrame, subset: list[str]) -> pd.DataFrame:
     return work.drop_duplicates(subset=[c for c in subset if c in work.columns], keep="first")
 
 
+def _prefer_unsharded(frame: pd.DataFrame) -> pd.DataFrame:
+    """Keep unsharded rows when they cover at least as much as the shards.
+
+    The current pipeline writes one unsharded file per track; leftover shard
+    files from earlier attempts would duplicate questions.  When the shards are
+    the larger source (the archived exploratory run), they are kept instead.
+    """
+
+    if frame.empty or "__shard_file__" not in frame.columns:
+        return frame
+    shard_rows = int(frame["__shard_file__"].sum())
+    unsharded = frame[~frame["__shard_file__"]]
+    if not unsharded.empty and len(unsharded) >= shard_rows:
+        return unsharded.drop(columns="__shard_file__")
+    return frame.drop(columns="__shard_file__")
+
+
 def _has_stable_keys(frame: pd.DataFrame) -> bool:
     return (
         "candidate_key" in frame.columns
@@ -67,8 +84,13 @@ def load_split(
     """
 
     def _glob_read(folder: str, pattern: str) -> pd.DataFrame:
-        frames = [_read(path) for path in sorted(Path(folder).glob(pattern))]
-        frames = [frame for frame in frames if not frame.empty]
+        frames = []
+        for path in sorted(Path(folder).glob(pattern)):
+            frame = _read(path)
+            if frame.empty:
+                continue
+            frame["__shard_file__"] = "__shard" in path.name
+            frames.append(frame)
         if not frames:
             return pd.DataFrame()
         return pd.concat(frames, ignore_index=True)
@@ -76,6 +98,28 @@ def load_split(
     labels = _glob_read(paths["labels"], f"track{track}_answers__{model_slug}*.jsonl")
     features = _glob_read(paths["features"], f"track{track}_features__{model_slug}*.jsonl")
     confidence = _glob_read(paths["labels"], f"track{track}_confidence__{model_slug}*.jsonl")
+
+    # Rows from other cohorts (for example the earlier exploratory run that
+    # shared this directory) are not part of the frozen analysis.
+    cohort_path = (
+        Path(paths["manifests"]) / "cohort.parquet" if "manifests" in paths else None
+    )
+    if cohort_path is not None and cohort_path.exists():
+        cohort_ids = set(pd.read_parquet(cohort_path)["question_id"].astype(str))
+        labels = labels[labels["question_id"].astype(str).isin(cohort_ids)].reset_index(drop=True)
+        features = features[features["question_id"].astype(str).isin(cohort_ids)].reset_index(drop=True)
+        if not confidence.empty:
+            confidence = confidence[
+                confidence["question_id"].astype(str).isin(cohort_ids)
+            ].reset_index(drop=True)
+
+    # Leftover __shard files from earlier attempts duplicate the current data.
+    # Keep the unsharded rows when they are at least as complete; otherwise the
+    # shards are the real data (for example the archived exploratory run).
+    labels = _prefer_unsharded(labels)
+    features = _prefer_unsharded(features)
+    confidence = _prefer_unsharded(confidence)
+
     if labels.empty or features.empty:
         return pd.DataFrame()
 
