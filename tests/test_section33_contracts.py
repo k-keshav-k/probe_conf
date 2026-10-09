@@ -805,6 +805,23 @@ def test_wikidata_fetch_builds_question_columns(monkeypatch):
     assert frame.loc[0, "sitelinks"] == 120
 
 
+def test_fill_popularity_reuses_sitelinks(tmp_path, monkeypatch):
+    from section33.data import wikidata
+
+    cohort = tmp_path / "cohort.csv"
+    pd.DataFrame(
+        {
+            "subject_id": ["Q1", "Q2", "Q3"],
+            "sitelinks": [10, None, None],
+            "popularity": [None, None, 5.0],
+        }
+    ).to_csv(cohort, index=False)
+    monkeypatch.setattr(wikidata, "fetch_sitelinks", lambda ids, **kwargs: {"Q2": 20.0})
+    frame = wikidata.fill_popularity(cohort)
+    values = frame.set_index("subject_id")["popularity"].to_dict()
+    assert values == {"Q1": 10.0, "Q2": 20.0, "Q3": 5.0}
+
+
 def test_pageviews_fetch_sums_monthly_items(monkeypatch):
     import requests
 

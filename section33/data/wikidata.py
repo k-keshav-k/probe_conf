@@ -152,6 +152,95 @@ def attach_popularity(cohort: pd.DataFrame, pageview_csv: Path, subject_column: 
     return cohort.merge(views, on=subject_column, how="left")
 
 
+SITELINK_QUERY = """
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wikibase: <http://wikiba.se/ontology#>
+SELECT ?subject ?sitelinks WHERE {{
+  VALUES ?subject {{ {values} }}
+  ?subject wikibase:sitelinks ?sitelinks .
+}}
+"""
+
+
+def fetch_sitelinks(
+    subject_ids,
+    endpoint: str = WIKIDATA_ENDPOINT,
+    chunk_size: int = 400,
+    retries: int = 3,
+    backoff: float = 2.0,
+) -> dict[str, float]:
+    """Bulk sitelink counts (number of Wikipedia language editions)."""
+
+    import requests
+
+    result: dict[str, float] = {}
+    ids = list(dict.fromkeys(str(subject) for subject in subject_ids))
+    for start in range(0, len(ids), chunk_size):
+        chunk = ids[start : start + chunk_size]
+        values = " ".join(f"wd:{qid}" for qid in chunk)
+        query = SITELINK_QUERY.format(values=values)
+        for attempt in range(retries + 1):
+            try:
+                response = requests.get(
+                    endpoint,
+                    params={"query": query, "format": "json"},
+                    headers={"User-Agent": USER_AGENT},
+                    timeout=60,
+                )
+                response.raise_for_status()
+                for binding in response.json()["results"]["bindings"]:
+                    qid = binding["subject"]["value"].rsplit("/", 1)[-1]
+                    result[qid] = float(binding["sitelinks"]["value"])
+                break
+            except requests.RequestException:
+                if attempt == retries:
+                    raise
+                time.sleep(backoff * (2**attempt))
+    return result
+
+
+def fill_popularity(
+    cohort_csv: Path,
+    pageviews_csv: Path | None = None,
+    endpoint: str = WIKIDATA_ENDPOINT,
+) -> pd.DataFrame:
+    """Fill missing popularity in an existing cohort CSV, in place.
+
+    Reuses whatever is already there: stored pageview values win, the stored
+    ``sitelinks`` column fills the rest, and a bulk SPARQL lookup covers any
+    remaining subjects.  No full cohort refetch is needed.
+    """
+
+    path = Path(cohort_csv)
+    frame = pd.read_csv(path)
+    if "popularity" not in frame.columns:
+        frame["popularity"] = float("nan")
+    frame["popularity"] = pd.to_numeric(frame["popularity"], errors="coerce")
+
+    if pageviews_csv is not None and Path(pageviews_csv).exists():
+        views = pd.read_csv(pageviews_csv)
+        if "popularity" in views.columns and "subject_id" in views.columns:
+            views = views[["subject_id", "popularity"]].rename(columns={"popularity": "views"})
+            frame = frame.merge(views, on="subject_id", how="left")
+            frame["popularity"] = frame["popularity"].fillna(frame["views"])
+            frame = frame.drop(columns="views")
+
+    if "sitelinks" in frame.columns:
+        frame["popularity"] = frame["popularity"].fillna(
+            pd.to_numeric(frame["sitelinks"], errors="coerce")
+        )
+
+    missing = frame["popularity"].isna()
+    if missing.any():
+        lookup = fetch_sitelinks(
+            frame.loc[missing, "subject_id"].astype(str).unique(), endpoint=endpoint
+        )
+        frame.loc[missing, "popularity"] = frame.loc[missing, "subject_id"].astype(str).map(lookup)
+
+    frame.to_csv(path, index=False)
+    return frame
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
@@ -166,7 +255,21 @@ def main(argv: list[str] | None = None) -> int:
         "--endpoint", default=WIKIDATA_ENDPOINT,
         help="SPARQL endpoint (defaults to $WIKIDATA_ENDPOINT or the Wikidata service)",
     )
+    parser.add_argument(
+        "--fill-popularity", action="store_true",
+        help="fill missing popularity in --out from pageviews and sitelinks, then exit",
+    )
+    parser.add_argument(
+        "--pageviews", type=Path, default=None,
+        help="optional subject_id,popularity CSV used before sitelinks",
+    )
     args = parser.parse_args(argv)
+    if args.fill_popularity:
+        frame = fill_popularity(args.out, pageviews_csv=args.pageviews, endpoint=args.endpoint)
+        print(
+            f"popularity coverage: {int(frame['popularity'].notna().sum())} of {len(frame)} rows"
+        )
+        return 0
     path = fetch_cohort(
         args.out,
         tuple(args.relations) if args.relations else None,
