@@ -520,6 +520,21 @@ def test_resume_drops_corrupt_lines_and_incomplete_questions(tmp_path):
     assert all(row["question_id"] == "q1" for row in rows)
 
 
+def test_shard_lock_rejects_duplicate_collector(tmp_path):
+    import os
+
+    from section33.models.collect import _acquire_shard_lock
+
+    path = tmp_path / "trackB_features__stub.jsonl"
+    first = _acquire_shard_lock(path)
+    assert first is not None
+    try:
+        with pytest.raises(SystemExit, match="already writes"):
+            _acquire_shard_lock(path)
+    finally:
+        os.close(first)
+
+
 def test_calibration_method_selection():
     frame = _synthetic_frame(seed=1)
     scores = np.clip(frame["f__hiddenproj__post__last_prompt__l0__k0"].to_numpy() * 0.2 + 0.5, 0, 1)

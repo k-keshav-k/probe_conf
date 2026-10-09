@@ -14,9 +14,11 @@ Reference answers live in the labels interface only.  Feature rows come from
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,7 +32,7 @@ from ..features import mlp_math as mm
 from ..features import probability as prob
 from ..features.hidden import HiddenProjector
 from ..schema import AnswerRecord, ConfidenceRecord, FeatureRow
-from ..utils import append_jsonl, batched, log, read_jsonl, set_seed, sha256_text
+from ..utils import append_jsonl, batched, log, set_seed, sha256_text
 from .contract import MLPCapture, get_layers, mlp_modules
 from .loader import LoadedModel, chat_prompt_ids, confidence_prompt_ids
 
@@ -98,31 +100,93 @@ def candidate_key(model: str, revision: str, token_ids: list[int]) -> str:
     return sha256_text(json.dumps([model, revision, list(token_ids)]))[:16]
 
 
-def _clean_jsonl(path: Path, keep: set[str]) -> int:
-    """Rewrite a jsonl file without incomplete questions or corrupt lines.
+def _read_rows(path: Path) -> list[dict]:
+    """Read valid rows, skipping corrupt lines and retrying stale handles."""
 
-    A killed job can leave a truncated final line; those lines are dropped
-    rather than crashing the resume read.
+    if not path.exists():
+        return []
+    for attempt in range(4):
+        try:
+            rows: list[dict] = []
+            with path.open() as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    try:
+                        rows.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+            return rows
+        except OSError as error:
+            if getattr(error, "errno", None) != errno.ESTALE or attempt == 3:
+                raise
+            time.sleep(1.0 * (2**attempt))
+    return []
+
+
+def _acquire_shard_lock(path: Path) -> int | None:
+    """Best-effort exclusive lock so two jobs cannot write one shard.
+
+    Returns the lock file descriptor (held for the process lifetime) or None
+    when the filesystem does not support advisory locks.  A duplicate
+    submission fails fast instead of corrupting the shard.
     """
+
+    try:
+        import fcntl
+    except ImportError:  # pragma: no cover - non-POSIX
+        return None
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as error:
+        os.close(fd)
+        if getattr(error, "errno", None) in (
+            errno.EOPNOTSUPP,
+            errno.ENOSYS,
+            errno.ENOLCK,
+            errno.EINVAL,
+        ):
+            return None
+        raise SystemExit(
+            f"another collector already writes {path.name}; cancel duplicate "
+            "jobs before resubmitting"
+        ) from error
+    return fd
+
+
+def _clean_jsonl(path: Path, keep: set[str]) -> int:
+    """Rewrite a jsonl file without incomplete questions or corrupt lines."""
 
     if not path.exists():
         return 0
     kept: list[dict] = []
     dropped = 0
-    with path.open() as handle:
-        for line in handle:
-            if not line.strip():
-                dropped += 1
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                dropped += 1
-                continue
-            if row.get("question_id") in keep:
-                kept.append(row)
-            else:
-                dropped += 1
+    for attempt in range(4):
+        try:
+            kept = []
+            dropped = 0
+            with path.open() as handle:
+                for line in handle:
+                    if not line.strip():
+                        dropped += 1
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        dropped += 1
+                        continue
+                    if row.get("question_id") in keep:
+                        kept.append(row)
+                    else:
+                        dropped += 1
+            break
+        except OSError as error:
+            if getattr(error, "errno", None) != errno.ESTALE or attempt == 3:
+                raise
+            time.sleep(1.0 * (2**attempt))
     if dropped:
         tmp = path.with_suffix(path.suffix + ".tmp")
         with tmp.open("w") as handle:
@@ -147,9 +211,9 @@ def _complete_question_ids(
     and two feature rows (positions) per candidate.
     """
 
-    labels = read_jsonl(labels_path, skip_invalid=True) if labels_path.exists() else []
-    confidence = read_jsonl(conf_path, skip_invalid=True) if conf_path.exists() else []
-    features = read_jsonl(feat_path, skip_invalid=True) if feat_path.exists() else []
+    labels = _read_rows(labels_path)
+    confidence = _read_rows(conf_path)
+    features = _read_rows(feat_path)
 
     if track.upper() == "A":
         label_ids = {row["question_id"] for row in labels if "question_id" in row}
@@ -438,6 +502,7 @@ def collect_track_a(
     feat_path = paths["features"] / f"trackA_features{suffix}.jsonl"
     for path in (labels_path, conf_path, feat_path):
         path.parent.mkdir(parents=True, exist_ok=True)
+    _acquire_shard_lock(feat_path)
 
     done = set()
     if settings.resume:
@@ -560,6 +625,7 @@ def collect_track_b(
     feat_path = paths["features"] / f"trackB_features{suffix}.jsonl"
     for path in (labels_path, conf_path, feat_path):
         path.parent.mkdir(parents=True, exist_ok=True)
+    _acquire_shard_lock(feat_path)
 
     done = set()
     if settings.resume:
