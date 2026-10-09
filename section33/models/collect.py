@@ -125,7 +125,12 @@ def _drop_incomplete_questions(path: Path, keep: set[str]) -> int:
 # Cached float32 weights
 # ---------------------------------------------------------------------------
 class ModelWeights:
-    """Float32 MLP weights and value-column norms for the frozen equations."""
+    """References to the model's MLP weights plus value-column norms.
+
+    The weights stay in the model dtype: float32 copies of every layer's
+    projections would add ~23 GB and overflow a 48 GB GPU.  The feature code
+    casts one layer's ``w_down`` to float32 when it needs it.
+    """
 
     def __init__(self, model, device: str):
         self.device = device
@@ -135,9 +140,9 @@ class ModelWeights:
         self.v_norms: list[torch.Tensor] = []
         for layer in get_layers(model):
             gate, up, down = mlp_modules(layer)
-            self.w_gate.append(gate.weight.detach().to(device, torch.float32))
-            self.w_up.append(up.weight.detach().to(device, torch.float32))
-            self.w_down.append(down.weight.detach().to(device, torch.float32))
+            self.w_gate.append(gate.weight)
+            self.w_up.append(up.weight)
+            self.w_down.append(down.weight)
             self.v_norms.append(down.weight.detach().float().norm(dim=0))
         self.n_layers = len(self.w_gate)
 
@@ -285,7 +290,7 @@ def extract_features_for_sequences(
         a = capture.captured[layer]["a"].float()
         b = capture.captured[layer]["b"].float()
         s = capture.captured[layer]["s"].float()
-        w_down = weights.w_down[layer]
+        w_down = weights.w_down[layer].float()
         o = torch.einsum("bpf,df->bpd", s, w_down)
         w2_dot = torch.einsum("bpd,df->bpf", x, w_down)
         h_pre = hidden[layer][rows.unsqueeze(1), columns]

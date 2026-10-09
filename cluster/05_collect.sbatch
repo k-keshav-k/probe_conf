@@ -72,6 +72,7 @@ srun apptainer exec --nv --overlay "$OVERLAY:ro" "$SIF" /bin/bash -c "
   source /ext3/env.sh
   export HF_HOME=$HF_HOME
   export TORCH_HOME=$TORCH_HOME
+  export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
   export OMP_NUM_THREADS=\$SLURM_CPUS_PER_TASK
   export TOKENIZERS_PARALLELISM=false
   cd $REPO

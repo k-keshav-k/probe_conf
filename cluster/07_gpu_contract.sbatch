@@ -36,6 +36,7 @@ echo "host: $(hostname)"; nvidia-smi || true
 srun apptainer exec --nv --overlay "$OVERLAY:ro" "$SIF" /bin/bash -c "
   source /ext3/env.sh
   export HF_HOME=$HF_HOME
+  export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
   cd $REPO
   export PYTHONPATH=$REPO
   python cluster/check_contract.py --model $MODEL
