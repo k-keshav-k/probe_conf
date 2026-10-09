@@ -33,12 +33,18 @@ def mlp_modules(layer):
     return mlp.gate_proj, mlp.up_proj, mlp.down_proj
 
 
-def verify_mlp_contract(model, atol: float = 5e-3) -> dict:
-    """Check biases and reconstruction for every layer on a random batch.
+def verify_mlp_contract(
+    model,
+    atol: float = 5e-3,
+    rtol: float = 5e-3,
+    input_ids: torch.Tensor | None = None,
+) -> dict:
+    """Check biases and reconstruction for every layer.
 
-    The check runs one forward pass with a small random input.  At every layer
-    it compares the captured module output with
-    ``W_down * (SiLU(W_gate x) * W_up x)``.
+    The identity ``o = W_down (SiLU(W_gate x) * W_up x)`` is checked with a
+    combined absolute/relative tolerance, because float16 outputs with large
+    magnitudes cannot meet a fixed absolute tolerance.  Pass ``input_ids`` to
+    check on a real prompt; a random hidden-state batch is used otherwise.
     """
 
     device = next(model.parameters()).device
@@ -72,31 +78,51 @@ def verify_mlp_contract(model, atol: float = 5e-3) -> dict:
 
     try:
         with torch.no_grad():
-            dummy = torch.randn(1, 4, hidden, device=device, dtype=dtype)
-            model(
-                inputs_embeds=dummy,
-                attention_mask=torch.ones(1, 4, device=device, dtype=torch.long),
-                use_cache=False,
-            )
+            if input_ids is None:
+                dummy = torch.randn(1, 4, hidden, device=device, dtype=dtype)
+                model(
+                    inputs_embeds=dummy,
+                    attention_mask=torch.ones(1, 4, device=device, dtype=torch.long),
+                    use_cache=False,
+                )
+            else:
+                ids = input_ids.to(device)
+                model(
+                    input_ids=ids,
+                    attention_mask=torch.ones_like(ids),
+                    use_cache=False,
+                )
     finally:
         for handle in handles:
             handle.remove()
 
     per_layer_error = {}
+    per_layer_relative = {}
+    per_layer_scale = {}
     for index, layer in enumerate(layers):
         gate, up, down = mlp_modules(layer)
         x = captured[index]["x"].float()
         _, _, _, reconstructed = mm.mlp_activations(
             x, gate.weight.float(), up.weight.float(), down.weight.float()
         )
-        per_layer_error[index] = float(
-            (reconstructed - captured[index]["o"].float()).detach().abs().max()
-        )
-    max_error = max(per_layer_error.values())
+        reference = captured[index]["o"].float()
+        error = float((reconstructed - reference).detach().abs().max())
+        scale = float(reference.abs().max().clamp_min(1.0))
+        per_layer_error[index] = error
+        per_layer_relative[index] = error / scale
+        per_layer_scale[index] = scale
     checks["reconstruction"] = {
-        "max_abs_error": max_error,
+        "max_abs_error": max(per_layer_error.values()),
+        "max_relative_error": max(per_layer_relative.values()),
         "per_layer_max_error": per_layer_error,
-        "passed": max_error <= atol,
+        "per_layer_relative_error": per_layer_relative,
+        "per_layer_output_scale": per_layer_scale,
+        "atol": atol,
+        "rtol": rtol,
+        "passed": all(
+            per_layer_error[index] <= atol + rtol * per_layer_scale[index]
+            for index in per_layer_error
+        ),
     }
     checks["bias_free"] = all(
         not any(flags.values()) for flags in checks["biases"].values()

@@ -472,6 +472,29 @@ def test_within_question_bootstrap_pools_singleton_strata():
     assert width > 0.0, "singleton strata must be pooled, not frozen"
 
 
+def test_verify_mlp_contract_relative_tolerance(tiny_model, monkeypatch):
+    from section33.features import mlp_math as mm
+    from section33.models import contract as contract_mod
+
+    original = mm.mlp_activations
+
+    def small_relative_error(x, w_gate, w_up, w_down):
+        a, b, s, o = original(x, w_gate, w_up, w_down)
+        return a, b, s, o * 1.001
+
+    monkeypatch.setattr(contract_mod.mm, "mlp_activations", small_relative_error)
+    assert contract_mod.verify_mlp_contract(tiny_model)["passed"]
+
+    def gross_error(x, w_gate, w_up, w_down):
+        a, b, s, o = original(x, w_gate, w_up, w_down)
+        return a, b, s, o + 10.0
+
+    monkeypatch.setattr(contract_mod.mm, "mlp_activations", gross_error)
+    report = contract_mod.verify_mlp_contract(tiny_model)
+    assert not report["passed"]
+    assert report["reconstruction"]["max_relative_error"] > 0.1
+
+
 def test_calibration_method_selection():
     frame = _synthetic_frame(seed=1)
     scores = np.clip(frame["f__hiddenproj__post__last_prompt__l0__k0"].to_numpy() * 0.2 + 0.5, 0, 1)

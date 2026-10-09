@@ -17,7 +17,8 @@ import json
 
 import torch
 
-from section33.models.collect import ModelWeights, extract_features_for_sequences
+from section33.features.hidden import HiddenProjector
+from section33.models.collect import CollectSettings, ModelWeights, extract_features_for_sequences
 from section33.models.contract import verify_mlp_contract
 from section33.models.loader import load_model_and_tokenizer
 
@@ -32,6 +33,8 @@ def main() -> int:
     loaded = load_model_and_tokenizer(
         args.model, revision=args.revision, dtype="float16", device=args.device
     )
+    prompt = "Who is the father of George W. Bush?"
+    ids = loaded.tokenizer(prompt, add_special_tokens=False)["input_ids"]
     report: dict = {
         "model": loaded.name,
         "revision": loaded.revision,
@@ -39,22 +42,38 @@ def main() -> int:
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "none",
         "layers": loaded.model.config.num_hidden_layers,
     }
-    report["contract"] = verify_mlp_contract(loaded.model)
+    report["contract"] = verify_mlp_contract(
+        loaded.model, input_ids=torch.tensor([ids], device=loaded.device)
+    )
 
     weights = ModelWeights(loaded.model, loaded.device)
-    prompt = "Who is the father of George W. Bush?"
-    ids = loaded.tokenizer(prompt, add_special_tokens=False)["input_ids"]
+    settings = CollectSettings()
+    projector = (
+        HiddenProjector(
+            weights.n_layers,
+            loaded.model.config.hidden_size,
+            dim=settings.hidden_proj_dim,
+            seed=settings.hidden_proj_seed,
+        )
+        if settings.hidden_proj
+        else None
+    )
     features = extract_features_for_sequences(
-        loaded, weights, [ids], [[len(ids) - 1]], ["last_prompt"], probability=True
+        loaded, weights, [ids], [[len(ids) - 1]], ["last_prompt"],
+        hidden_projector=projector, probability=True,
     )[0]
     report["n_features"] = len(features)
     report["families"] = sorted({key.split("__")[0] for key in features})
+    report["has_hiddenproj"] = any(key.startswith("hiddenproj__") for key in features)
     report["reference_free"] = not any(
         name in key for key in features
         for name in ("cos_sel_agold", "proj_gold_norm", "mlp_margin", "ent_cand", "logit_mlp_gold")
     )
     report["passed"] = bool(
-        report["contract"]["passed"] and report["reference_free"] and report["n_features"] > 1000
+        report["contract"]["passed"]
+        and report["reference_free"]
+        and report["has_hiddenproj"]
+        and report["n_features"] > 1000
     )
     print(json.dumps(report, indent=2))
     return 0 if report["passed"] else 1
