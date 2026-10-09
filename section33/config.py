@@ -61,7 +61,7 @@ class SplitSizes:
     train: int = 2_000
     dev: int = 800
     calibration: int = 800
-    test: int = 2_400
+    test: int = 4_000
     test_cap: int = 6_000
 
     @property
