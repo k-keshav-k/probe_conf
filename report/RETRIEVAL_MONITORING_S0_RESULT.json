@@ -1,0 +1,209 @@
+{
+  "note": "S0 repaired baselines: frozen cohort, canonical collection, draw counts validated",
+  "reports": [
+    {
+      "track": "A",
+      "mode": "question",
+      "n_train_questions": 2000,
+      "n_train_rows": 2000,
+      "n_train_subjects": 2000,
+      "n_dev_questions": 800,
+      "n_dev_rows": 800,
+      "n_test_questions": 4000,
+      "n_test_rows": 4000,
+      "n_test_subjects": 4000,
+      "selected_c": 0.03,
+      "overall_auroc": 0.7891819210201563,
+      "within_question_auroc": null,
+      "eligible_questions": 0,
+      "saved": {
+        "saved_H": 0.8876378033730975,
+        "saved_P": 0.7525812422871248,
+        "saved_V": 0.5920068901686549
+      },
+      "observed_delta_vs_hidden": -0.09845588235294123,
+      "delta_ci": [
+        -0.12168371526675821,
+        -0.07464222395463273
+      ],
+      "bootstrap_mean_delta": -0.0979769810894619,
+      "within_observed_delta": null,
+      "within_delta_ci": null,
+      "provenance": {
+        "run_dir": "runs/section33_confirmatory",
+        "answer_files": [
+          {
+            "path": "runs/section33_confirmatory/labels/trackA_answers__qwen__qwen2.5_7b_instruct.jsonl",
+            "sha256": "4bb71deba949bfc494636424b546d62535219d309b30acd4f5afed60b29bf65a"
+          }
+        ],
+        "cohort_manifest": {
+          "path": "runs/section33_confirmatory/manifests/cohort.parquet",
+          "sha256": "53dfc249aa9f52e73c7157502d9d6d9bc087e5aeb7883d65d64d244d75855608"
+        },
+        "predictions": "runs/section33_confirmatory/predictions/test_predictions__qwen__qwen2.5_7b_instruct__trackA.parquet",
+        "expected_draws": 1,
+        "c_selection": {
+          "0.03": {
+            "dev_auroc": 0.7572187753606116,
+            "dev_brier": 0.05707655553818961
+          },
+          "0.1": {
+            "dev_auroc": 0.7569569884028378,
+            "dev_brier": 0.057453867954162394
+          },
+          "0.3": {
+            "dev_auroc": 0.7544176549124323,
+            "dev_brier": 0.05782011493212858
+          },
+          "1.0": {
+            "dev_auroc": 0.7477682661849786,
+            "dev_brier": 0.058475705604229884
+          },
+          "3.0": {
+            "dev_auroc": 0.74166863006885,
+            "dev_brier": 0.059706350752389434
+          }
+        }
+      }
+    },
+    {
+      "track": "B",
+      "mode": "question",
+      "n_train_questions": 2000,
+      "n_train_rows": 10006,
+      "n_train_subjects": 2000,
+      "n_dev_questions": 800,
+      "n_dev_rows": 4044,
+      "n_test_questions": 4000,
+      "n_test_rows": 32000,
+      "n_test_subjects": 4000,
+      "selected_c": 0.3,
+      "overall_auroc": 0.7974935702135002,
+      "within_question_auroc": 0.5,
+      "eligible_questions": 341,
+      "saved": {
+        "saved_H": 0.9354848474452816,
+        "saved_P": 0.8383926105512188,
+        "saved_V": 0.570839099803835
+      },
+      "observed_delta_vs_hidden": -0.1379912772317814,
+      "delta_ci": [
+        -0.16060216009826814,
+        -0.1182492555529412
+      ],
+      "bootstrap_mean_delta": -0.13784734464634732,
+      "within_observed_delta": -0.3315388912163106,
+      "within_delta_ci": [
+        -0.3617275869291998,
+        -0.29959101382488484
+      ],
+      "provenance": {
+        "run_dir": "runs/section33_confirmatory",
+        "answer_files": [
+          {
+            "path": "runs/section33_confirmatory/labels/trackB_answers__qwen__qwen2.5_7b_instruct.jsonl",
+            "sha256": "958d14d4033efd0d0636b9ab0df6532a4319f8fd039c1674d320b87016c791a7"
+          }
+        ],
+        "cohort_manifest": {
+          "path": "runs/section33_confirmatory/manifests/cohort.parquet",
+          "sha256": "53dfc249aa9f52e73c7157502d9d6d9bc087e5aeb7883d65d64d244d75855608"
+        },
+        "predictions": "runs/section33_confirmatory/predictions/test_predictions__qwen__qwen2.5_7b_instruct__trackB.parquet",
+        "expected_draws": 8,
+        "c_selection": {
+          "0.03": {
+            "dev_auroc": 0.7765494241736505,
+            "dev_brier": 0.03062352716794396
+          },
+          "0.1": {
+            "dev_auroc": 0.7782098625213334,
+            "dev_brier": 0.03066137853436151
+          },
+          "0.3": {
+            "dev_auroc": 0.7800311181423996,
+            "dev_brier": 0.030566090466868034
+          },
+          "1.0": {
+            "dev_auroc": 0.7754940608170724,
+            "dev_brier": 0.030982960196729102
+          },
+          "3.0": {
+            "dev_auroc": 0.7661666589608389,
+            "dev_brier": 0.031376155460733225
+          }
+        }
+      }
+    },
+    {
+      "track": "B",
+      "mode": "question_candidate",
+      "n_train_questions": 2000,
+      "n_train_rows": 10006,
+      "n_train_subjects": 2000,
+      "n_dev_questions": 800,
+      "n_dev_rows": 4044,
+      "n_test_questions": 4000,
+      "n_test_rows": 32000,
+      "n_test_subjects": 4000,
+      "selected_c": 0.1,
+      "overall_auroc": 0.8656910764782719,
+      "within_question_auroc": 0.6631371316855188,
+      "eligible_questions": 341,
+      "saved": {
+        "saved_H": 0.9354848474452816,
+        "saved_P": 0.8383926105512188,
+        "saved_V": 0.570839099803835
+      },
+      "observed_delta_vs_hidden": -0.06979377096700967,
+      "delta_ci": [
+        -0.08665066202752375,
+        -0.054347279224675214
+      ],
+      "bootstrap_mean_delta": -0.07016955897975831,
+      "within_observed_delta": -0.16840175953079178,
+      "within_delta_ci": [
+        -0.21315458734813575,
+        -0.12257375017455664
+      ],
+      "provenance": {
+        "run_dir": "runs/section33_confirmatory",
+        "answer_files": [
+          {
+            "path": "runs/section33_confirmatory/labels/trackB_answers__qwen__qwen2.5_7b_instruct.jsonl",
+            "sha256": "958d14d4033efd0d0636b9ab0df6532a4319f8fd039c1674d320b87016c791a7"
+          }
+        ],
+        "cohort_manifest": {
+          "path": "runs/section33_confirmatory/manifests/cohort.parquet",
+          "sha256": "53dfc249aa9f52e73c7157502d9d6d9bc087e5aeb7883d65d64d244d75855608"
+        },
+        "predictions": "runs/section33_confirmatory/predictions/test_predictions__qwen__qwen2.5_7b_instruct__trackB.parquet",
+        "expected_draws": 8,
+        "c_selection": {
+          "0.03": {
+            "dev_auroc": 0.834675822530098,
+            "dev_brier": 0.027828452764574803
+          },
+          "0.1": {
+            "dev_auroc": 0.8391847368325831,
+            "dev_brier": 0.027120952820417113
+          },
+          "0.3": {
+            "dev_auroc": 0.837522288268983,
+            "dev_brier": 0.026854938987304497
+          },
+          "1.0": {
+            "dev_auroc": 0.8321891854404081,
+            "dev_brier": 0.026892568010884674
+          },
+          "3.0": {
+            "dev_auroc": 0.8253484206738646,
+            "dev_brier": 0.027378728323427737
+          }
+        }
+      }
+    }
+  ]
+}
