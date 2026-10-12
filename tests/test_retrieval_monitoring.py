@@ -416,6 +416,27 @@ def test_pilot_selectivity_report():
     assert report["confidence_diagnostic"]["relevant"]["mean"] > 0.0
 
 
+def test_build_pairs_from_source():
+    from retrieval_monitoring.pilot import build_pairs_from_source
+
+    source = pd.DataFrame(
+        [
+            {"question_id": "q1", "subject_id": "s1", "subject_name": "A",
+             "relation": "father", "question": "F1?", "reference_answers": ["x"]},
+            {"question_id": "q2", "subject_id": "s1", "subject_name": "A",
+             "relation": "occupation", "question": "O1?", "reference_answers": ["y"]},
+            {"question_id": "q3", "subject_id": "s2", "subject_name": "B",
+             "relation": "father", "question": "F2?", "reference_answers": ["z"]},
+        ]
+    )
+    pairs = build_pairs_from_source(source, ("father", "occupation"), 1)
+    assert len(pairs) == 1
+    assert pairs[0]["subject_id"] == "s1"
+    assert [entry["relation"] for entry in pairs[0]["relations"]] == ["father", "occupation"]
+    with pytest.raises(ValueError, match="need 2"):
+        build_pairs_from_source(source, ("father", "occupation"), 2)
+
+
 def test_pilot_pair_selection_needs_two_relations():
     cohort = pd.DataFrame(
         [

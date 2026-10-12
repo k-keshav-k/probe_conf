@@ -69,16 +69,30 @@ def cmd_toy(args) -> int:
 
 
 def cmd_pilot(args) -> int:
-    from .runner import run_pilot
+    from .runner import run_pilot, run_pilot_from_source
 
-    report = run_pilot(
-        args.run,
-        args.model,
-        n_subjects=args.subjects,
-        layer_index=args.layer,
-        alpha=args.alpha,
-        dtype=args.dtype,
-    )
+    relations = tuple(args.relations)
+    if args.source is not None:
+        report = run_pilot_from_source(
+            args.source,
+            args.model,
+            run_dir=args.run,
+            n_subjects=args.subjects,
+            relations=relations,
+            layer_index=args.layer,
+            alpha=args.alpha,
+            dtype=args.dtype,
+        )
+    else:
+        report = run_pilot(
+            args.run,
+            args.model,
+            n_subjects=args.subjects,
+            relations=relations,
+            layer_index=args.layer,
+            alpha=args.alpha,
+            dtype=args.dtype,
+        )
     print(json.dumps(report, indent=2))
     return 0 if report.get("passed") else 1
 
@@ -113,6 +127,11 @@ def build_parser() -> argparse.ArgumentParser:
     pilot.add_argument("--layer", type=int, default=None)
     pilot.add_argument("--alpha", type=float, default=0.5)
     pilot.add_argument("--dtype", default="float16")
+    pilot.add_argument(
+        "--source", type=Path, default=None,
+        help="raw source CSV; builds pairs from subjects with both relations",
+    )
+    pilot.add_argument("--relations", nargs=2, default=["father", "occupation"])
     pilot.set_defaults(func=cmd_pilot)
     return parser
 

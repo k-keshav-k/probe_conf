@@ -90,6 +90,60 @@ def select_subject_pairs(
     return pairs
 
 
+def build_pairs_from_source(
+    source: pd.DataFrame,
+    relations: tuple[str, ...],
+    n_subjects: int,
+    exclude_subject_ids: set[str] | None = None,
+) -> list[dict]:
+    """Subjects that have a question in every requested relation.
+
+    ``source`` is a normalized cohort table (question_id, subject_id,
+    subject_name, relation, question, reference_answers).  The frozen cohort
+    and the historical subjects can be excluded to keep the pilot separate.
+    """
+
+    exclude = {str(value) for value in (exclude_subject_ids or set())}
+    block = source[source["relation"].isin(relations)].copy()
+    block["subject_id"] = block["subject_id"].astype(str)
+    block = block[~block["subject_id"].isin(exclude)]
+    pairs: list[dict] = []
+    for subject_id, group in block.groupby("subject_id"):
+        entries = []
+        for relation in relations:
+            match = group[group["relation"] == relation]
+            if match.empty:
+                continue
+            row = match.iloc[0]
+            reference = row["reference_answers"]
+            if not isinstance(reference, (list, tuple, np.ndarray)):
+                reference = [str(reference)]
+            entries.append(
+                {
+                    "relation": relation,
+                    "question_id": str(row["question_id"]),
+                    "question": str(row["question"]),
+                    "reference_answers": [str(item) for item in reference],
+                }
+            )
+        if len(entries) == len(relations):
+            pairs.append(
+                {
+                    "subject_id": subject_id,
+                    "name": str(group.iloc[0]["subject_name"]),
+                    "relations": entries,
+                }
+            )
+        if len(pairs) >= n_subjects:
+            break
+    if len(pairs) < n_subjects:
+        raise ValueError(
+            f"found {len(pairs)} subjects with all relations {relations} outside the "
+            f"exclusions; need {n_subjects}"
+        )
+    return pairs
+
+
 def success_table(rows: pd.DataFrame) -> pd.DataFrame:
     """Mean success per (subject, queried relation, state)."""
 
