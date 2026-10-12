@@ -27,12 +27,15 @@ USER_AGENT = "section33-cohort/0.1 (research; contact: local user)"
 PAIR_QUERY = """
 PREFIX wd: <http://www.wikidata.org/entity/>
 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX wikibase: <http://wikiba.se/ontology#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX schema: <http://schema.org/>
-SELECT ?subject ?subjectLabel ?firstLabel ?secondLabel WHERE {{
+SELECT ?subject ?subjectLabel ?firstLabel ?secondLabel ?sitelinks WHERE {{
   ?subject wdt:P31 wd:Q5 ;
            wdt:{first} ?first ;
-           wdt:{second} ?second .
+           wdt:{second} ?second ;
+           wikibase:sitelinks ?sitelinks .
+  FILTER(?sitelinks >= {min_sitelinks})
   ?article schema:about ?subject ;
            schema:isPartOf <https://en.wikipedia.org/> .
   ?subject rdfs:label ?subjectLabel . FILTER(LANG(?subjectLabel) = "en")
@@ -49,15 +52,23 @@ def fetch_pairs(
     endpoint: str = ENDPOINT,
     retries: int = 4,
     backoff: float = 3.0,
+    min_sitelinks: int = 40,
 ) -> pd.DataFrame:
-    """Fetch subjects with both relations and one answer per relation."""
+    """Fetch subjects with both relations, most-linked (famous) first.
+
+    The pilot needs headroom: obscure subjects sit at the success floor even
+    clean, so damage cannot be measured.  A sitelinks filter keeps widely known
+    subjects; the endpoint sorts them locally because ``ORDER BY`` over the full
+    match set times out.
+    """
 
     import requests
 
     query = PAIR_QUERY.format(
         first=RELATION_QIDS[relations[0]],
         second=RELATION_QIDS[relations[1]],
-        limit=limit,
+        limit=max(limit * 4, 400),
+        min_sitelinks=min_sitelinks,
     )
     for attempt in range(retries + 1):
         try:
@@ -80,11 +91,18 @@ def fetch_pairs(
             {
                 "subject_id": binding["subject"]["value"].rsplit("/", 1)[-1],
                 "subject_name": binding["subjectLabel"]["value"],
+                "sitelinks": int(binding["sitelinks"]["value"]),
                 relations[0]: binding["firstLabel"]["value"],
                 relations[1]: binding["secondLabel"]["value"],
             }
         )
-    frame = pd.DataFrame(rows).drop_duplicates("subject_id").reset_index(drop=True)
+    frame = (
+        pd.DataFrame(rows)
+        .drop_duplicates("subject_id")
+        .sort_values("sitelinks", ascending=False)
+        .head(limit)
+        .reset_index(drop=True)
+    )
     return frame
 
 
@@ -124,7 +142,7 @@ def load_pairs_csv(path: Path, relations: tuple[str, ...]) -> list[dict]:
     frame = pd.read_csv(path)
     frame["subject_id"] = frame["subject_id"].astype(str)
     pairs = []
-    for subject_id, group in frame.groupby("subject_id"):
+    for subject_id, group in frame.groupby("subject_id", sort=False):
         entries = []
         for relation in relations:
             match = group[group["relation"] == relation]

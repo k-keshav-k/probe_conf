@@ -36,7 +36,10 @@ SOURCE="${SOURCE:-$RUN_DIR/source/wikidata_cohort.csv}"
 PAIRS="${PAIRS:-$RUN_DIR/retrieval_monitoring/pilot_pairs.csv}"
 SUBJECTS="${SUBJECTS:-40}"
 ALPHA="${ALPHA:-0.5}"
+RANK="${RANK:-2}"
+LAYER="${LAYER:-}"
 RELATIONS="${RELATIONS:-father occupation}"
+if [ -n "$LAYER" ]; then LAYER_ARGS="--layer $LAYER"; else LAYER_ARGS=""; fi
 
 if [ ! -f "$PAIRS" ]; then
   echo "ERROR: pairs CSV not found: $PAIRS" >&2
@@ -50,7 +53,7 @@ echo "host: $(hostname)"; nvidia-smi || true
 echo "model=$MODEL"
 echo "source=$SOURCE"
 echo "pairs=$PAIRS"
-echo "subjects=$SUBJECTS alpha=$ALPHA relations=$RELATIONS"
+echo "subjects=$SUBJECTS alpha=$ALPHA rank=$RANK layer=${LAYER:-auto} relations=$RELATIONS"
 
 srun apptainer exec --nv --overlay "$OVERLAY:ro" "$SIF" /bin/bash -c "
   set -e
@@ -63,5 +66,6 @@ srun apptainer exec --nv --overlay "$OVERLAY:ro" "$SIF" /bin/bash -c "
   cd $REPO
   python -m retrieval_monitoring.cli pilot \
     --source $SOURCE --pairs $PAIRS --run $RUN_DIR --model $MODEL \
-    --subjects $SUBJECTS --alpha $ALPHA --dtype float16 --relations $RELATIONS
+    --subjects $SUBJECTS --alpha $ALPHA --rank $RANK $LAYER_ARGS \
+    --dtype float16 --relations $RELATIONS
 "

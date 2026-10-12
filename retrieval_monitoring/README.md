@@ -9,9 +9,9 @@ confirmatory code in `section33/`.
 | Stage | Status |
 | --- | --- |
 | S0 repaired text baselines | Implemented. Run on the frozen confirmatory cohort. Result: `report/RETRIEVAL_MONITORING_S0_RESULT.json` |
-| S1 retained-state contract | Implemented with the mask fix. CPU tests pass. The real-model check (`check-state`) needs a GPU node. |
-| S2 toy world | Implemented with low-rank relation operators. CPU smoke passes. |
-| S3 40-subject pilot | Runner and analysis implemented. Needs a cohort with two questions per subject and a GPU node. |
+| S1 retained-state contract | Implemented with the mask fix. Passed on 0.5B and 7B. |
+| S2 toy world | Implemented with low-rank relation operators. Passed on 3 seeds. |
+| S3 40-subject pilot | Ran once. Gate failed: obscure subjects sat at the success floor and `alpha=0.5` moved the state by ~1% of its norm. Pair fetch now orders by sitelinks and a development sweep (`sweep`) picks layer/rank/alpha before the rerun. |
 | M1 / M2 / M3 | Not implemented. These wait on the S3 selectivity gate. |
 
 ## Modules
@@ -26,6 +26,7 @@ confirmatory code in `section33/`.
 | `toy_world` | S2 one-layer toy with embedding-level interventions |
 | `collector` | Resumable retained-state generation and scoring |
 | `pilot` | S3 selectivity analysis and pair selection |
+| `sweep` | S3 development sweep over layer, rank, and alpha |
 | `runner` | GPU runner for the S3 pilot |
 | `cli` | Command line entry points |
 
@@ -43,15 +44,23 @@ confirmatory code in `section33/`.
 # S2: toy world (CPU)
 .venv/bin/python -m retrieval_monitoring.cli toy --steps 600 --seeds 3
 
-# S3: fetch pilot pairs on the login node (needs internet)
+# S3: fetch pilot pairs on the login node (needs internet). Famous subjects
+# first (sitelinks filter); obscure subjects sit at the success floor.
 bash cluster/run.sh python -m retrieval_monitoring.cli fetch-pairs \
   --out "$RUN_DIR/retrieval_monitoring/pilot_pairs.csv" --limit 400
 
-# S3: selectivity pilot (GPU)
-bash cluster/run.sh python -m retrieval_monitoring.cli pilot \
+# S3: development sweep over layer, rank, alpha (GPU, ~10-20 min)
+bash cluster/run.sh python -m retrieval_monitoring.cli sweep \
   --run "$RUN_DIR" --model "$PRIMARY_MODEL" \
   --source "$RUN_DIR/source/wikidata_cohort.csv" \
   --pairs "$RUN_DIR/retrieval_monitoring/pilot_pairs.csv"
+
+# S3: selectivity pilot (GPU) with the swept settings
+bash cluster/run.sh python -m retrieval_monitoring.cli pilot \
+  --run "$RUN_DIR" --model "$PRIMARY_MODEL" \
+  --source "$RUN_DIR/source/wikidata_cohort.csv" \
+  --pairs "$RUN_DIR/retrieval_monitoring/pilot_pairs.csv" \
+  --layer 13 --rank 2 --alpha 10
 ```
 
 Tests:
@@ -77,12 +86,33 @@ The question-only within-question AUROC is 0.500 on Track B (no signal), and
 the question-plus-candidate baseline reaches 0.663. This is a tested baseline,
 not the strongest possible input-only observer.
 
+## S3 development log
+
+First pilot (Qwen2.5-7B-Instruct, layer 13, rank 2, alpha 0.5, 40 subjects):
+
+- `clean_success` 0.142, floor share 0.725. The pairs fetch returned obscure
+  low-QID subjects, so most cells scored 0/8 even clean and damage had no room
+  to show.
+- `damage_relevant` 0.0, `damage_other` and `damage_random` 0.0016. The
+  realized perturbation norm was 0.525 against subject-state norms around 17,
+  i.e. about 1 percent. A local 0.5B replication gave a total-variation
+  distance of 0.002 between clean and relevant next-token distributions at
+  alpha 1; the distance grows to about 0.03 at alpha 10 and 0.13 at alpha 50.
+- Confidence parsing was fixed separately: the chat-interface elicitation
+  parses 100 percent, the earlier terse plain-text suffix parsed none.
+
+The rerun uses famous subjects and the sweep-selected layer/rank/alpha. The
+sweep reports the teacher-forced reference-answer log-probability drop for
+relevant, other, and norm-matched random states, plus the realized perturbation
+fraction of the state norm.
+
 ## What the plan asks next
 
-1. Run the S1 real-model checks on the small model and then 7B, using the exact
-   proposed templates and automatic subject spans.
-2. Run the S2 toy to debug the intervention if needed.
-3. Build a pilot cohort with two questions per subject, then run the S3
-   40-subject selectivity pilot.
-4. Only after the selectivity gate: M1 native reporting, M2 learned reporting,
+1. Refetch the pairs CSV (famous subjects), run the S3 sweep, and pick a
+   setting with positive relevant damage and clear selectivity over the
+   controls.
+2. Rerun the 40-subject pilot with those settings. The gate needs
+   `damage_relevant >= 0.05` and `selectivity_vs_random >= 0.03` in answer
+   success.
+3. Only after the selectivity gate: M1 native reporting, M2 learned reporting,
    M3 pathway tests.

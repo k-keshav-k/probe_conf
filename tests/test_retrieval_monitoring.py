@@ -532,6 +532,21 @@ def test_pairs_to_questions_and_round_trip(tmp_path):
     assert {entry["relation"] for entry in pairs[0]["relations"]} == {"father", "occupation"}
 
 
+def test_pairs_csv_preserves_order(tmp_path):
+    from retrieval_monitoring.pairs import load_pairs_csv
+
+    path = tmp_path / "pairs.csv"
+    path.write_text(
+        "question_id,subject_id,subject_name,relation,question,reference_answers\n"
+        "q2,Q2,B,father,Who is the father of B?,X\n"
+        "q3,Q2,B,occupation,What is B's occupation?,Y\n"
+        "q1,Q1,A,father,Who is the father of A?,Z\n"
+        "q4,Q1,A,occupation,What is A's occupation?,W\n"
+    )
+    pairs = load_pairs_csv(path, ("father", "occupation"))
+    assert [pair["subject_id"] for pair in pairs] == ["Q2", "Q1"]
+
+
 def test_pilot_pair_selection_needs_two_relations():
     cohort = pd.DataFrame(
         [
@@ -567,6 +582,54 @@ def test_confidence_suffix_uses_frozen_chat_wording():
     assert "Who is the father of Ada Lovelace?" in text
     assert "Answer with only the integer" in text
     assert text.rstrip().endswith("assistant:")
+
+
+def test_sweep_runs_on_tiny_model(tmp_path):
+    from retrieval_monitoring.sweep import SweepConfig, run_sweep
+
+    class Loaded:
+        pass
+
+    model = tiny_model()
+    loaded = Loaded()
+    loaded.model = model
+    loaded.tokenizer = StubTokenizer()
+    loaded.device = "cpu"
+    loaded.name = "stub"
+    loaded.revision = "stub"
+
+    source = pd.DataFrame(
+        [
+            {"subject_id": "m1", "subject_name": "A", "relation": "father",
+             "reference_answers": ["Pierre"]},
+            {"subject_id": "m2", "subject_name": "B", "relation": "father",
+             "reference_answers": ["Paul"]},
+            {"subject_id": "m3", "subject_name": "C", "relation": "occupation",
+             "reference_answers": ["physicist"]},
+            {"subject_id": "m4", "subject_name": "D", "relation": "occupation",
+             "reference_answers": ["chemist"]},
+        ]
+    )
+    pairs = [
+        {
+            "subject_id": "s1",
+            "name": "Marie Curie",
+            "relations": [
+                {"relation": "father", "question_id": "q1", "question": "Who is the father?",
+                 "reference_answers": ["Pierre"]},
+                {"relation": "occupation", "question_id": "q2",
+                 "question": "What is the occupation?", "reference_answers": ["physicist"]},
+            ],
+        }
+    ]
+    config = SweepConfig(layers=(0,), ranks=(2,), alphas=(2.0, 5.0), n_subjects=1, map_subjects=2)
+    report = run_sweep(loaded, source, pairs, config, out_dir=tmp_path)
+    assert (tmp_path / "sweep_report.json").exists()
+    assert len(report["settings"]) == 2
+    for setting in report["settings"]:
+        assert setting["n_records"] == 2
+        assert "selectivity_vs_random" in setting
+        assert setting["delta_fraction"] >= 0.0
 
 
 def test_collector_rows_and_resume(tmp_path):

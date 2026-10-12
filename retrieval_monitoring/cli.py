@@ -77,6 +77,32 @@ def cmd_fetch_pairs(args) -> int:
     return 0
 
 
+def cmd_sweep(args) -> int:
+    from section33.models.loader import load_model_and_tokenizer
+
+    from .pairs import load_pairs_csv
+    from .runner import load_normalized_source
+    from .sweep import SweepConfig, run_sweep
+
+    source = load_normalized_source(args.source)
+    pairs = load_pairs_csv(args.pairs, tuple(args.relations))[: args.subjects]
+    loaded = load_model_and_tokenizer(args.model, dtype=args.dtype)
+    config = SweepConfig(
+        layers=tuple(args.layers),
+        ranks=tuple(args.ranks),
+        alphas=tuple(args.alphas),
+        n_subjects=args.subjects,
+        relations=tuple(args.relations),
+        map_subjects=args.map_subjects,
+    )
+    out_dir = args.out or (
+        Path(args.run) / "retrieval_monitoring" if args.run else None
+    )
+    report = run_sweep(loaded, source, pairs, config, run_dir=args.run, out_dir=out_dir)
+    print(json.dumps(report, indent=2))
+    return 0
+
+
 def cmd_pilot(args) -> int:
     from .runner import run_pilot, run_pilot_from_source
 
@@ -91,6 +117,7 @@ def cmd_pilot(args) -> int:
             relations=relations,
             layer_index=args.layer,
             alpha=args.alpha,
+            rank=args.rank,
             dtype=args.dtype,
         )
     else:
@@ -101,6 +128,7 @@ def cmd_pilot(args) -> int:
             relations=relations,
             layer_index=args.layer,
             alpha=args.alpha,
+            rank=args.rank,
             dtype=args.dtype,
         )
     print(json.dumps(report, indent=2))
@@ -139,11 +167,27 @@ def build_parser() -> argparse.ArgumentParser:
     fetch.add_argument("--endpoint", default="https://query.wikidata.org/sparql")
     fetch.set_defaults(func=cmd_fetch_pairs)
 
+    sweep = sub.add_parser("sweep", help="S3 development sweep over layer, rank, alpha")
+    sweep.add_argument("--source", type=Path, required=True)
+    sweep.add_argument("--pairs", type=Path, required=True)
+    sweep.add_argument("--run", type=Path, default=None)
+    sweep.add_argument("--model", default="Qwen/Qwen2.5-7B-Instruct")
+    sweep.add_argument("--subjects", type=int, default=12)
+    sweep.add_argument("--layers", nargs="+", type=int, default=[8, 13, 18])
+    sweep.add_argument("--ranks", nargs="+", type=int, default=[2, 8])
+    sweep.add_argument("--alphas", nargs="+", type=float, default=[1.0, 5.0, 10.0, 25.0])
+    sweep.add_argument("--map-subjects", type=int, default=200)
+    sweep.add_argument("--relations", nargs=2, default=["father", "occupation"])
+    sweep.add_argument("--dtype", default="float16")
+    sweep.add_argument("--out", type=Path, default=None)
+    sweep.set_defaults(func=cmd_sweep)
+
     pilot = sub.add_parser("pilot", help="S3 selectivity pilot")
     pilot.add_argument("--run", type=Path, default=Path("runs/section33_confirmatory"))
     pilot.add_argument("--model", default="Qwen/Qwen2.5-7B-Instruct")
     pilot.add_argument("--subjects", type=int, default=40)
     pilot.add_argument("--layer", type=int, default=None)
+    pilot.add_argument("--rank", type=int, default=2)
     pilot.add_argument("--alpha", type=float, default=0.5)
     pilot.add_argument("--dtype", default="float16")
     pilot.add_argument(
