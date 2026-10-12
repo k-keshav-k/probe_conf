@@ -83,12 +83,13 @@ def attenuate_state(hidden: torch.Tensor, relation_map: RelationMap, alpha: floa
 def random_map_like(relation_map: RelationMap, seed: int) -> RelationMap:
     """Random orthonormal basis with the same rank and mean."""
 
-    generator = torch.Generator().manual_seed(seed)
+    device = relation_map.basis.device
+    generator = torch.Generator(device=device).manual_seed(seed)
     raw = torch.randn(
         relation_map.rank,
         relation_map.basis.shape[1],
         generator=generator,
-        device=relation_map.basis.device,
+        device=device,
         dtype=relation_map.basis.dtype,
     )
     q, _ = torch.linalg.qr(raw.T)
