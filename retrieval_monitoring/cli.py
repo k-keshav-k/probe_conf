@@ -68,6 +68,15 @@ def cmd_toy(args) -> int:
     return 0
 
 
+def cmd_fetch_pairs(args) -> int:
+    from .pairs import fetch_pairs, write_pairs_csv
+
+    frame = fetch_pairs(tuple(args.relations), limit=args.limit, endpoint=args.endpoint)
+    path = write_pairs_csv(frame, args.out)
+    print(f"wrote {path}: {len(frame)} subjects with relations {args.relations}")
+    return 0
+
+
 def cmd_pilot(args) -> int:
     from .runner import run_pilot, run_pilot_from_source
 
@@ -77,6 +86,7 @@ def cmd_pilot(args) -> int:
             args.source,
             args.model,
             run_dir=args.run,
+            pairs_csv=args.pairs,
             n_subjects=args.subjects,
             relations=relations,
             layer_index=args.layer,
@@ -120,6 +130,15 @@ def build_parser() -> argparse.ArgumentParser:
     toy.add_argument("--out", default=None)
     toy.set_defaults(func=cmd_toy)
 
+    fetch = sub.add_parser(
+        "fetch-pairs", help="fetch subjects with two relations (login node, needs internet)"
+    )
+    fetch.add_argument("--out", type=Path, required=True)
+    fetch.add_argument("--limit", type=int, default=200)
+    fetch.add_argument("--relations", nargs=2, default=["father", "occupation"])
+    fetch.add_argument("--endpoint", default="https://query.wikidata.org/sparql")
+    fetch.set_defaults(func=cmd_fetch_pairs)
+
     pilot = sub.add_parser("pilot", help="S3 selectivity pilot")
     pilot.add_argument("--run", type=Path, default=Path("runs/section33_confirmatory"))
     pilot.add_argument("--model", default="Qwen/Qwen2.5-7B-Instruct")
@@ -129,7 +148,11 @@ def build_parser() -> argparse.ArgumentParser:
     pilot.add_argument("--dtype", default="float16")
     pilot.add_argument(
         "--source", type=Path, default=None,
-        help="raw source CSV; builds pairs from subjects with both relations",
+        help="raw source CSV used to fit the relation maps",
+    )
+    pilot.add_argument(
+        "--pairs", type=Path, default=None,
+        help="pairs CSV from fetch-pairs; subjects with both relations",
     )
     pilot.add_argument("--relations", nargs=2, default=["father", "occupation"])
     pilot.set_defaults(func=cmd_pilot)

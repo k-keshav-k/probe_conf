@@ -24,6 +24,7 @@ from section33.models.loader import load_model_and_tokenizer
 
 from .collector import CollectorSettings, RetainedCollector, capture_subject_states
 from .interventions import fit_relation_map
+from .pairs import load_pairs_csv
 from .pilot import (
     build_pairs_from_source,
     load_rows,
@@ -206,6 +207,7 @@ def run_pilot_from_source(
     model_name: str,
     *,
     run_dir: Path | None = None,
+    pairs_csv: Path | None = None,
     n_subjects: int = 40,
     relations: tuple[str, str] = ("father", "occupation"),
     layer_index: int | None = None,
@@ -215,11 +217,26 @@ def run_pilot_from_source(
     map_subjects: int = 200,
     out_dir: Path | None = None,
 ) -> dict:
-    """Build pilot pairs from the raw source and run the selectivity pilot."""
+    """Build pilot pairs and run the selectivity pilot.
+
+    ``pairs_csv`` comes from ``retrieval_monitoring.pairs`` and holds subjects
+    that have both relations.  Without it, the runner tries to find pairs in
+    the raw source, which rarely works because each relation is fetched
+    independently.
+    """
 
     source = load_normalized_source(source_csv)
     exclude = _cohort_subject_ids(run_dir)
-    pairs = build_pairs_from_source(source, relations, n_subjects, exclude)
+    if pairs_csv is not None:
+        pairs = load_pairs_csv(pairs_csv, relations)
+        if len(pairs) < n_subjects:
+            raise ValueError(
+                f"pairs CSV holds {len(pairs)} complete pairs; need {n_subjects}. "
+                "Fetch more with `python -m retrieval_monitoring.cli fetch-pairs`."
+            )
+        pairs = pairs[:n_subjects]
+    else:
+        pairs = build_pairs_from_source(source, relations, n_subjects, exclude)
     pilot_ids = {pair["subject_id"] for pair in pairs}
     loaded = load_model_and_tokenizer(model_name, dtype=dtype)
     if layer_index is None:

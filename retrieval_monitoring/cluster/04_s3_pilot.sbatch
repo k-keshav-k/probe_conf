@@ -33,13 +33,23 @@ cd "$REPO"
 
 MODEL="${MODEL:-$PRIMARY_MODEL}"
 SOURCE="${SOURCE:-$RUN_DIR/source/wikidata_cohort.csv}"
+PAIRS="${PAIRS:-$RUN_DIR/retrieval_monitoring/pilot_pairs.csv}"
 SUBJECTS="${SUBJECTS:-40}"
 ALPHA="${ALPHA:-0.5}"
 RELATIONS="${RELATIONS:-father occupation}"
 
+if [ ! -f "$PAIRS" ]; then
+  echo "ERROR: pairs CSV not found: $PAIRS" >&2
+  echo "Fetch it on the login node first (it needs internet):" >&2
+  echo "  bash cluster/run.sh python -m retrieval_monitoring.cli fetch-pairs \\" >&2
+  echo "      --out \"$PAIRS\" --limit 400" >&2
+  exit 1
+fi
+
 echo "host: $(hostname)"; nvidia-smi || true
 echo "model=$MODEL"
 echo "source=$SOURCE"
+echo "pairs=$PAIRS"
 echo "subjects=$SUBJECTS alpha=$ALPHA relations=$RELATIONS"
 
 srun apptainer exec --nv --overlay "$OVERLAY:ro" "$SIF" /bin/bash -c "
@@ -52,6 +62,6 @@ srun apptainer exec --nv --overlay "$OVERLAY:ro" "$SIF" /bin/bash -c "
   export TOKENIZERS_PARALLELISM=false
   cd $REPO
   python -m retrieval_monitoring.cli pilot \
-    --source $SOURCE --run $RUN_DIR --model $MODEL \
+    --source $SOURCE --pairs $PAIRS --run $RUN_DIR --model $MODEL \
     --subjects $SUBJECTS --alpha $ALPHA --dtype float16 --relations $RELATIONS
 "

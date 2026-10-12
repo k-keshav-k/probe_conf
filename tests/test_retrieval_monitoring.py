@@ -437,6 +437,28 @@ def test_build_pairs_from_source():
         build_pairs_from_source(source, ("father", "occupation"), 2)
 
 
+def test_pairs_to_questions_and_round_trip(tmp_path):
+    from retrieval_monitoring.pairs import load_pairs_csv, pairs_to_questions, write_pairs_csv
+
+    frame = pd.DataFrame(
+        [
+            {
+                "subject_id": "Q1",
+                "subject_name": "Ada Lovelace",
+                "father": "Byron",
+                "occupation": "mathematician",
+            }
+        ]
+    )
+    table = pairs_to_questions(frame, ("father", "occupation"))
+    assert len(table) == 2
+    assert "Ada Lovelace" in table.iloc[0]["question"]
+    path = write_pairs_csv(frame, tmp_path / "pairs.csv")
+    pairs = load_pairs_csv(path, ("father", "occupation"))
+    assert len(pairs) == 1
+    assert {entry["relation"] for entry in pairs[0]["relations"]} == {"father", "occupation"}
+
+
 def test_pilot_pair_selection_needs_two_relations():
     cohort = pd.DataFrame(
         [

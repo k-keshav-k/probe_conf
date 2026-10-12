@@ -43,9 +43,15 @@ confirmatory code in `section33/`.
 # S2: toy world (CPU)
 .venv/bin/python -m retrieval_monitoring.cli toy --steps 600 --seeds 3
 
-# S3: selectivity pilot (GPU; needs a two-relations-per-subject cohort)
-.venv/bin/python -m retrieval_monitoring.cli pilot \
-  --run runs/section33_confirmatory --model Qwen/Qwen2.5-7B-Instruct
+# S3: fetch pilot pairs on the login node (needs internet)
+bash cluster/run.sh python -m retrieval_monitoring.cli fetch-pairs \
+  --out "$RUN_DIR/retrieval_monitoring/pilot_pairs.csv" --limit 400
+
+# S3: selectivity pilot (GPU)
+bash cluster/run.sh python -m retrieval_monitoring.cli pilot \
+  --run "$RUN_DIR" --model "$PRIMARY_MODEL" \
+  --source "$RUN_DIR/source/wikidata_cohort.csv" \
+  --pairs "$RUN_DIR/retrieval_monitoring/pilot_pairs.csv"
 ```
 
 Tests:
