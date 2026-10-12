@@ -91,9 +91,10 @@ def capture_subject_states(
     device = loaded.device
     states: dict[str, torch.Tensor] = {}
     for subject in subjects:
-        prefix_ids = _encode(tokenizer, subject_prefix(subject["name"]), device)
+        prefix = subject_prefix(subject["name"])
+        prefix_ids = _encode(tokenizer, prefix, device)
         span_start, span_end = locate_span(
-            tokenizer, prefix_ids[0].tolist(), subject["name"]
+            tokenizer, prefix_ids[0].tolist(), subject["name"], prefix_text=prefix
         )
         captured: dict[str, torch.Tensor] = {}
 
@@ -185,8 +186,11 @@ class RetainedCollector:
         with out_path.open("a") as handle:
             for pair in pairs:
                 clean_state = subject_states[str(pair["subject_id"])].to(device)
-                prefix_ids = _encode(tokenizer, subject_prefix(pair["name"]), device)
-                _, span_end = locate_span(tokenizer, prefix_ids[0].tolist(), pair["name"])
+                prefix = subject_prefix(pair["name"])
+                prefix_ids = _encode(tokenizer, prefix, device)
+                _, span_end = locate_span(
+                    tokenizer, prefix_ids[0].tolist(), pair["name"], prefix_text=prefix
+                )
                 for index, query in enumerate(pair["relations"]):
                     other = pair["relations"][1 - index]
                     queried_map = self.relation_maps[str(query["relation"])]

@@ -143,6 +143,34 @@ def test_retained_state_intervention_and_generation():
     assert clean.cache.get_seq_length() == before
 
 
+class MergeTokenizer:
+    """Standalone 'ab' -> [1,2]; inside 'ab.' the last character merges to [1,3]."""
+
+    pad_token_id = 0
+    eos_token_id = 1
+
+    def __call__(self, text, add_special_tokens=False, return_offsets_mapping=False):
+        if text == "ab":
+            ids, offsets = [1, 2], [(0, 1), (1, 2)]
+        elif text == "ab.":
+            ids, offsets = [1, 3], [(0, 1), (1, 3)]
+        else:
+            ids, offsets = [9], [(0, len(text))]
+        payload = {"input_ids": ids}
+        if return_offsets_mapping:
+            payload["offset_mapping"] = offsets
+        return payload
+
+
+def test_locate_span_offset_fallback():
+    from retrieval_monitoring.retained_state import locate_span
+
+    tokenizer = MergeTokenizer()
+    ids = tokenizer("ab.", add_special_tokens=False)["input_ids"]
+    start, end = locate_span(tokenizer, ids, "ab", prefix_text="ab.")
+    assert (start, end) == (0, 2)
+
+
 def test_state_check_runs_on_tiny_model():
     from retrieval_monitoring.checks import run_state_check
 

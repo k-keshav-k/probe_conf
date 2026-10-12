@@ -275,13 +275,19 @@ def full_run(
         )
 
 
-def locate_span(tokenizer, ids: list[int], text: str) -> tuple[int, int]:
+def locate_span(
+    tokenizer,
+    ids: list[int],
+    text: str,
+    prefix_text: str | None = None,
+) -> tuple[int, int]:
     """Find the token span of ``text`` inside ``ids`` (first occurrence).
 
-    Tries the text with and without a leading space, because the same word
-    tokenizes differently at the start of a string and after a space.  Also
-    tries dropping the first token of each variant.  Raises ValueError when no
-    variant matches.  This is the automatic subject-location helper.
+    First tries exact token-subsequence matches, with and without a leading
+    space and with the first token dropped.  If that fails, ``prefix_text``
+    enables a character-offset fallback, which handles punctuation merges such
+    as ``"Jr."`` inside ``"Subject: Friedrich Ebert Jr.."``.  Raises
+    ValueError when no variant matches.
     """
 
     candidates: list[list[int]] = []
@@ -297,6 +303,25 @@ def locate_span(tokenizer, ids: list[int], text: str) -> tuple[int, int]:
         for start in range(0, len(ids) - len(needle) + 1):
             if ids[start : start + len(needle)] == needle:
                 return start, start + len(needle)
+
+    if prefix_text is not None and text in prefix_text:
+        try:
+            encoded = tokenizer(
+                prefix_text, add_special_tokens=False, return_offsets_mapping=True
+            )
+        except (TypeError, ValueError):
+            encoded = None
+        if encoded is not None and list(encoded["input_ids"]) == list(ids):
+            start_char = prefix_text.index(text)
+            end_char = start_char + len(text)
+            span = [
+                index
+                for index, (start_offset, end_offset) in enumerate(encoded["offset_mapping"])
+                if end_offset > start_char and start_offset < end_char
+            ]
+            if span:
+                return span[0], span[-1] + 1
+
     raise ValueError(f"span not found in token ids: {text!r}")
 
 

@@ -55,7 +55,9 @@ def run_state_check(
     suffix_ids = torch.tensor(
         [tokenizer(suffix_text, add_special_tokens=False)["input_ids"]], device=device
     )
-    span_start, span_end = locate_span(tokenizer, prefix_ids[0].tolist(), subject_text)
+    span_start, span_end = locate_span(
+        tokenizer, prefix_ids[0].tolist(), subject_text, prefix_text=prefix_text
+    )
 
     checks: dict = {
         "prefix_len": int(prefix_ids.shape[1]),
