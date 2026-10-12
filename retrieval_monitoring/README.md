@@ -106,6 +106,17 @@ sweep reports the teacher-forced reference-answer log-probability drop for
 relevant, other, and norm-matched random states, plus the realized perturbation
 fraction of the state norm.
 
+The first sweep (with the named question) showed no real selectivity: on items
+the model actually knew, the intervention changed the reference likelihood by
+about 0.02 nats, and the apparent signal came from items with wrong or unknown
+references. The cause was the prompt: the question repeated the subject name,
+so the prefix state was redundant. A full ablation of the prefix subject token
+then changed the answer by less than a norm-matched random control. With a
+bare question ("Who is the father?", "What is the occupation?"), the subject
+appears only in the prefix, and full ablation produces large drops (about 0.3
+to 3.9 nats on known items). The answer suffix now uses the bare question, so
+the sweep and the pilot must be rerun.
+
 ## What the plan asks next
 
 1. Refetch the pairs CSV (famous subjects), run the S3 sweep, and pick a

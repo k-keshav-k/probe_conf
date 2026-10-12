@@ -132,7 +132,7 @@ def run_sweep(loaded, source, pairs: list[dict], config: SweepConfig, *, run_dir
                         queried_map = maps[str(query["relation"])]
                         other_map = maps[str(other["relation"])]
                         suffix_ids = _encode(
-                            loaded.tokenizer, answer_suffix(query["question"]), device
+                            loaded.tokenizer, answer_suffix(query["relation"]), device
                         )
                         scores: dict[str, dict] = {}
                         norms: dict[str, float] = {}

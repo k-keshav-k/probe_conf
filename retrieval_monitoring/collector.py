@@ -60,8 +60,36 @@ def subject_prefix(name: str) -> str:
     return f"Subject: {name}."
 
 
-def answer_suffix(question: str) -> str:
-    return f"\nQuestion: {question}\nAnswer:"
+BARE_QUESTIONS = {
+    "father": "Who is the father?",
+    "mother": "Who is the mother?",
+    "occupation": "What is the occupation?",
+    "place_of_birth": "In what city was this person born?",
+}
+
+
+def bare_question(relation: str) -> str:
+    """The relation question without the subject name."""
+
+    try:
+        return BARE_QUESTIONS[relation]
+    except KeyError:
+        raise KeyError(
+            f"no bare question for relation {relation!r}; add it to BARE_QUESTIONS"
+        ) from None
+
+
+def answer_suffix(relation: str) -> str:
+    """Plain-answer suffix with a bare question.
+
+    The subject appears only in the prefix.  Repeating the name in the question
+    makes the prefix state redundant: full ablation of the subject token then
+    changed the reference likelihood by less than a norm-matched random
+    control.  With the bare question the prefix state is causally necessary,
+    which is what the intervention needs.
+    """
+
+    return f"\nQuestion: {bare_question(relation)}\nAnswer:"
 
 
 def _chat_suffix(tokenizer, content: str) -> str:
@@ -213,7 +241,9 @@ class RetainedCollector:
                     other = pair["relations"][1 - index]
                     queried_map = self.relation_maps[str(query["relation"])]
                     other_map = self.relation_maps[str(other["relation"])]
-                    answer_ids = _encode(tokenizer, answer_suffix(query["question"]), device)
+                    answer_ids = _encode(
+                        tokenizer, answer_suffix(query["relation"]), device
+                    )
                     confidence_ids = _encode(
                         tokenizer, confidence_suffix(tokenizer, query["question"]), device
                     )

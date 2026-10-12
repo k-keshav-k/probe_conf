@@ -575,6 +575,16 @@ def test_toy_world_smoke():
 # ---------------------------------------------------------------------------
 # Collector (tiny model, stub tokenizer)
 # ---------------------------------------------------------------------------
+def test_answer_suffix_uses_bare_question():
+    from retrieval_monitoring.collector import answer_suffix, bare_question
+
+    assert bare_question("father") == "Who is the father?"
+    assert bare_question("occupation") == "What is the occupation?"
+    assert answer_suffix("father") == "\nQuestion: Who is the father?\nAnswer:"
+    with pytest.raises(KeyError, match="no bare question"):
+        bare_question("unknown_relation")
+
+
 def test_confidence_suffix_uses_frozen_chat_wording():
     from retrieval_monitoring.collector import confidence_suffix
 
