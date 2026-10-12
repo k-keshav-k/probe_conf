@@ -278,16 +278,25 @@ def full_run(
 def locate_span(tokenizer, ids: list[int], text: str) -> tuple[int, int]:
     """Find the token span of ``text`` inside ``ids`` (first occurrence).
 
-    Raises ValueError when the span is not present as a contiguous token
-    subsequence.  This is the automatic subject-location helper.
+    Tries the text with and without a leading space, because the same word
+    tokenizes differently at the start of a string and after a space.  Also
+    tries dropping the first token of each variant.  Raises ValueError when no
+    variant matches.  This is the automatic subject-location helper.
     """
 
-    needle = tokenizer(text, add_special_tokens=False)["input_ids"]
-    if not needle:
-        raise ValueError(f"text tokenizes to nothing: {text!r}")
-    for start in range(0, len(ids) - len(needle) + 1):
-        if ids[start : start + len(needle)] == list(needle):
-            return start, start + len(needle)
+    candidates: list[list[int]] = []
+    truncated: list[list[int]] = []
+    for variant in (text, " " + text, text.strip()):
+        needle = tokenizer(variant, add_special_tokens=False)["input_ids"]
+        if not needle:
+            continue
+        candidates.append(list(needle))
+        if len(needle) > 1:
+            truncated.append(list(needle[1:]))
+    for needle in candidates + truncated:
+        for start in range(0, len(ids) - len(needle) + 1):
+            if ids[start : start + len(needle)] == needle:
+                return start, start + len(needle)
     raise ValueError(f"span not found in token ids: {text!r}")
 
 
