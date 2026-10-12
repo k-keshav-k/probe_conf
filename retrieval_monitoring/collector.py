@@ -20,6 +20,7 @@ from pathlib import Path
 
 import torch
 
+from section33.config import CONFIDENCE_TRACK_A, FEWSHOT, SYSTEM_PROMPT
 from section33.data.labels import match_candidate
 from section33.models.collect import parse_confidence
 
@@ -63,11 +64,28 @@ def answer_suffix(question: str) -> str:
     return f"\nQuestion: {question}\nAnswer:"
 
 
-def confidence_suffix(question: str) -> str:
-    return (
-        f"\nQuestion: {question}\n"
-        "Confidence that the specified answer policy will be correct (0-100):"
-    )
+def _chat_suffix(tokenizer, content: str) -> str:
+    """Frozen chat-format task suffix: system prompt, few-shot, user turn."""
+
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for user, assistant in FEWSHOT:
+        messages.append({"role": "user", "content": user})
+        messages.append({"role": "assistant", "content": assistant})
+    messages.append({"role": "user", "content": content})
+    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+
+def confidence_suffix(tokenizer, question: str) -> str:
+    """Frozen confidence wording in the chat interface.
+
+    The Section 3.3 elicitation parsed into a bare integer on all 93,449 of its
+    Qwen2.5-7B-Instruct confidence rows.  Plain-text continuation of the same
+    wording does not: the small-model check returned ``'(8)'``, and the earlier
+    terse suffix left every pilot confidence cell unparsable.  The chat suffix
+    returns parseable integers from the retained subject prefix.
+    """
+
+    return _chat_suffix(tokenizer, CONFIDENCE_TRACK_A.format(question=question))
 
 
 def _encode(tokenizer, text: str, device) -> torch.Tensor:
@@ -197,7 +215,7 @@ class RetainedCollector:
                     other_map = self.relation_maps[str(other["relation"])]
                     answer_ids = _encode(tokenizer, answer_suffix(query["question"]), device)
                     confidence_ids = _encode(
-                        tokenizer, confidence_suffix(query["question"]), device
+                        tokenizer, confidence_suffix(tokenizer, query["question"]), device
                     )
                     for state in STATES:
                         delta = _delta_for_state(

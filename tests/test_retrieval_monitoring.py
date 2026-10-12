@@ -82,6 +82,12 @@ class StubTokenizer:
     def decode(self, ids, skip_special_tokens=True):
         return " ".join(str(int(token)) for token in ids)
 
+    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
+        text = " ".join(
+            f"{message['role']}: {message['content']}" for message in messages
+        )
+        return text + (" assistant:" if add_generation_prompt else "")
+
 
 # ---------------------------------------------------------------------------
 # S1: retained state
@@ -444,6 +450,45 @@ def test_pilot_selectivity_report():
     assert report["confidence_diagnostic"]["relevant"]["mean"] > 0.0
 
 
+def test_pilot_report_tolerates_unparsed_confidence():
+    """Unparsable confidence must not crash the report or fake a diagnostic."""
+
+    rows = []
+    rng = np.random.default_rng(1)
+    for subject in range(6):
+        for relation in ("father", "occupation"):
+            for state, success in (
+                ("clean", 0.9),
+                ("relevant", 0.5),
+                ("other", 0.85),
+                ("random", 0.85),
+            ):
+                for draw in range(4):
+                    rows.append(
+                        {
+                            "kind": "answer",
+                            "subject_id": f"s{subject}",
+                            "queried_relation": relation,
+                            "state": state,
+                            "draw": draw,
+                            "label": int(rng.random() < success),
+                        }
+                    )
+                rows.append(
+                    {
+                        "kind": "confidence",
+                        "subject_id": f"s{subject}",
+                        "queried_relation": relation,
+                        "state": state,
+                        "confidence": None,
+                        "parse_ok": False,
+                    }
+                )
+    report = selectivity_report(pd.DataFrame(rows), PilotThresholds(), n_boot=50)
+    assert report["confidence_parse_rate"] == 0.0
+    assert "confidence_diagnostic" not in report
+
+
 def test_build_pairs_from_source():
     from retrieval_monitoring.pilot import build_pairs_from_source
 
@@ -515,6 +560,15 @@ def test_toy_world_smoke():
 # ---------------------------------------------------------------------------
 # Collector (tiny model, stub tokenizer)
 # ---------------------------------------------------------------------------
+def test_confidence_suffix_uses_frozen_chat_wording():
+    from retrieval_monitoring.collector import confidence_suffix
+
+    text = confidence_suffix(StubTokenizer(), "Who is the father of Ada Lovelace?")
+    assert "Who is the father of Ada Lovelace?" in text
+    assert "Answer with only the integer" in text
+    assert text.rstrip().endswith("assistant:")
+
+
 def test_collector_rows_and_resume(tmp_path):
     from retrieval_monitoring.collector import (
         CollectorSettings,

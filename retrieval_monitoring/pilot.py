@@ -170,15 +170,36 @@ def confidence_table(rows: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _paired_changes(table: pd.DataFrame, value: str, baseline: str = "clean") -> pd.DataFrame:
+def _paired_changes(
+    table: pd.DataFrame,
+    value: str,
+    baseline: str = "clean",
+    *,
+    require_all_states: bool = False,
+) -> pd.DataFrame:
+    """Paired changes from the baseline state, one row per subject/relation.
+
+    ``dropna=False`` keeps an all-NaN state column visible so a missing state is
+    reported explicitly instead of vanishing from the pivot.  With
+    ``require_all_states``, subject/relation cells missing any state are
+    dropped; this is used for the secondary confidence diagnostic, where a
+    missing cell must not silently become a zero change.
+    """
+
     wide = table.pivot_table(
-        index=["subject_id", "queried_relation"], columns="state", values=value
+        index=["subject_id", "queried_relation"],
+        columns="state",
+        values=value,
+        dropna=False,
     ).reset_index()
     if baseline not in wide.columns:
         raise ValueError(f"missing baseline state {baseline}")
+    if require_all_states:
+        present = [state for state in STATES if state in wide.columns]
+        wide = wide.dropna(subset=present)
     changes = {"subject_id": wide["subject_id"], "queried_relation": wide["queried_relation"]}
     for state in STATES:
-        if state == baseline:
+        if state == baseline or state not in wide.columns:
             continue
         changes[f"change_{state}"] = wide[baseline] - wide[state]
     return pd.DataFrame(changes)
@@ -221,17 +242,29 @@ def selectivity_report(
         "ceiling_share": float((clean_success >= 0.99).mean()),
         "floor_share": float((clean_success <= 0.01).mean()),
     }
-    confidence = confidence_table(rows)
-    if not confidence.empty:
-        confidence_changes = _paired_changes(confidence, "confidence")
-        confidence_subject = confidence_changes.groupby("subject_id").mean(numeric_only=True)
-        report["confidence_diagnostic"] = {}
-        for state in ("relevant", "other", "random"):
-            column = f"change_{state}"
-            if column in confidence_subject.columns:
-                values = confidence_subject[column].to_numpy(dtype=float)
-                mean, interval = _bootstrap_mean_ci(values, n_boot=n_boot, seed=seed + 2)
-                report["confidence_diagnostic"][state] = {"mean": mean, "ci": list(interval)}
+    confidence_rows = rows[rows["kind"] == "confidence"]
+    if not confidence_rows.empty:
+        if "parse_ok" in confidence_rows.columns:
+            parsed_mask = confidence_rows["parse_ok"].fillna(False).astype(bool)
+        else:
+            parsed_mask = pd.Series(True, index=confidence_rows.index)
+        report["confidence_parse_rate"] = float(parsed_mask.mean())
+        confidence = confidence_table(confidence_rows[parsed_mask])
+        if not confidence.empty and (confidence["state"] == "clean").any():
+            confidence_changes = _paired_changes(
+                confidence, "confidence", require_all_states=True
+            )
+            confidence_subject = confidence_changes.groupby("subject_id").mean(numeric_only=True)
+            diagnostic: dict = {}
+            for state in ("relevant", "other", "random"):
+                column = f"change_{state}"
+                if column in confidence_subject.columns:
+                    values = confidence_subject[column].dropna().to_numpy(dtype=float)
+                    if values.size:
+                        mean, interval = _bootstrap_mean_ci(values, n_boot=n_boot, seed=seed + 2)
+                        diagnostic[state] = {"mean": mean, "ci": list(interval)}
+            if diagnostic:
+                report["confidence_diagnostic"] = diagnostic
     relevant = report["damage_relevant"]["mean"]
     selectivity = report["selectivity_vs_random"]["mean"]
     report["passed"] = bool(
