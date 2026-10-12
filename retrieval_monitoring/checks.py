@@ -118,7 +118,8 @@ def run_state_check(
     checks["generated_tokens"] = int(generated.shape[1])
     replay = clean_replay(model, state, suffix_ids)
     checks["clean_replay_vs_full"] = _max_diff(
-        replay.logits, reference.logits[:, -suffix_ids.shape[1] :]
+        replay.logits[:, -suffix_ids.shape[1] :],
+        reference.logits[:, -suffix_ids.shape[1] :],
     )
 
     checks["passed"] = bool(

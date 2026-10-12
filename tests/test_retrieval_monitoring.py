@@ -143,6 +143,26 @@ def test_retained_state_intervention_and_generation():
     assert clean.cache.get_seq_length() == before
 
 
+def test_state_check_runs_on_tiny_model():
+    from retrieval_monitoring.checks import run_state_check
+
+    class Loaded:
+        pass
+
+    loaded = Loaded()
+    loaded.model = tiny_model()
+    loaded.tokenizer = StubTokenizer()
+    loaded.device = "cpu"
+    checks = run_state_check(
+        loaded,
+        subject_text="Marie Curie",
+        question="In what city was Marie Curie born?",
+    )
+    assert checks["passed"] is True
+    assert checks["generated_tokens"] > 0
+    assert checks["clean_replay_vs_full"] < checks["tolerance"]
+
+
 def test_locate_span():
     tokenizer = StubTokenizer()
     ids = tokenizer("Subject: Marie Curie.", add_special_tokens=False)["input_ids"]
