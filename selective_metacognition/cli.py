@@ -24,6 +24,7 @@ def _build_config(args) -> ToyConfig:
         "lr",
         "warm_start_lr",
         "report_steps",
+        "report_collect_steps",
         "rounds",
         "lambda_sel",
         "eta_consistency",
@@ -36,6 +37,8 @@ def _build_config(args) -> ToyConfig:
         "n_relations",
         "memory_dim",
         "adapter_rank",
+        "d_report",
+        "report_layers",
     ):
         value = getattr(args, name, None)
         if value is not None:
@@ -126,6 +129,7 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--lr", type=float, default=None)
         command.add_argument("--warm-start-lr", type=float, default=None)
         command.add_argument("--report-steps", type=int, default=None)
+        command.add_argument("--report-collect-steps", type=int, default=None)
         command.add_argument("--rounds", type=int, default=None)
         command.add_argument("--lambda-sel", type=float, default=None)
         command.add_argument("--eta-consistency", type=float, default=None)
@@ -139,6 +143,8 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--n-relations", type=int, default=None)
         command.add_argument("--memory-dim", type=int, default=None)
         command.add_argument("--adapter-rank", type=int, default=None)
+        command.add_argument("--d-report", type=int, default=None)
+        command.add_argument("--report-layers", type=int, default=None)
         command.add_argument("--out", type=Path, default=None)
         command.set_defaults(func=function)
     return parser

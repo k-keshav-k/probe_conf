@@ -90,7 +90,8 @@ def test_adapter_starts_as_base_and_scopes_are_isolated():
 
     set_report_trainable(model)
     names = [name for name, parameter in model.named_parameters() if parameter.requires_grad]
-    assert names == ["report_head.weight"]
+    assert names
+    assert all(name.startswith("report_head") for name in names)
 
 
 def test_e1_smoke_runs_and_learns():
@@ -124,6 +125,32 @@ def test_functional_table_and_report_rows_shapes():
         ("clean", "target_weaken", "irrelevant_weaken", "irrelevant_swap", "target_swap_valid", "false_memory")
     )
     assert len(rows) == expected_rows
+
+
+def test_incremental_brier_is_positive_for_informative_report():
+    rng = np.random.default_rng(0)
+
+    def make_rows(n: int) -> list[dict]:
+        rows = []
+        for index in range(n):
+            p = float(rng.uniform(0.05, 0.95))
+            outcomes = (rng.random(8) < p).astype(float).tolist()
+            rows.append(
+                {
+                    "subject_id": index,
+                    "relation": index % 4,
+                    "condition": "clean",
+                    "p_correct": p,
+                    "report": p + 0.05 * float(rng.normal()),
+                    "outcomes": outcomes,
+                    "entropy": 1.0 + 0.1 * float(rng.normal()),
+                    "max_prob": 0.5 + 0.1 * float(rng.normal()),
+                }
+            )
+        return rows
+
+    metrics = reporting_metrics(make_rows(400), make_rows(400), 4)
+    assert metrics["incremental_brier"] > 0.02
 
 
 def test_reporting_metrics_smoke():

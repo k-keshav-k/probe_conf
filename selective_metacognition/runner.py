@@ -64,6 +64,7 @@ def run_e1(config: ToyConfig, seeds: int | None = None, device: torch.device | s
     per_seed = {}
     for seed in range(seeds):
         world = World(config, seed=seed, device=device)
+        torch.manual_seed(seed)
         model = Selector(config).to(device)
         warm_start(config, world, model, seed)
         results = {"warm_start": evaluate_functional(model, world, seed)}
@@ -87,6 +88,7 @@ def run_e2(config: ToyConfig, seeds: int | None = None, device: torch.device | s
     per_seed = {}
     for seed in range(seeds):
         world = World(config, seed=seed, device=device)
+        torch.manual_seed(seed)
         model = Selector(config).to(device)
         warm_start(config, world, model, seed)
         results = {}

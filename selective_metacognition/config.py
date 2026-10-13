@@ -58,6 +58,8 @@ class ToyConfig:
     n_layers: int = 2
     adapter_rank: int = 8
     adapter_layers: tuple[int, ...] = ()  # empty = last block
+    d_report: int = 256
+    report_layers: int = 2
     temperature: float = 1.0
     # --- retrieval training ------------------------------------------------
     batch: int = 128
@@ -70,9 +72,10 @@ class ToyConfig:
     eta_consistency: float = 1.0
     # --- reporting ---------------------------------------------------------
     confidence_grid: tuple[float, ...] = CONFIDENCE_GRID
-    report_steps: int = 300
-    report_lr: float = 3e-3
+    report_steps: int = 3000
+    report_lr: float = 1e-3
     report_batch: int = 256
+    report_collect_steps: int = 120
     outcomes_per_item: int = 8
     eval_outcomes: int = 16
     rounds: int = 3

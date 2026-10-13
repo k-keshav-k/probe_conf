@@ -172,7 +172,16 @@ def _outcome_matrix(rows: list[dict]) -> np.ndarray:
 
 
 def _brier(probabilities: np.ndarray, outcomes: np.ndarray) -> float:
-    probabilities = probabilities[:, None]
+    """Mean squared error with per-row probabilities broadcast over outcomes.
+
+    Accepts a 1-D probability vector or a 2-D column.  The earlier version
+    always added a column, which turned an already-columnar input into
+    ``(N, 1, 1)`` and silently averaged over the wrong broadcast shape.
+    """
+
+    probabilities = np.asarray(probabilities)
+    if probabilities.ndim == 1:
+        probabilities = probabilities[:, None]
     return float(np.mean((probabilities - outcomes) ** 2))
 
 

@@ -164,9 +164,28 @@ closed form, `E[Y] = pi[a*]`. The primary arms use that exact expected reward
 sampled leave-one-out path is kept in `training.sampled_reward` for an
 optional check.
 
-The report head is a distribution over a fixed grid (`0.00, 0.05, ..., 1.00`).
-It is trained against outcomes sampled from the frozen answer policy, using the
-exact expected Brier score against the empirical outcome mean.
+The report head is a distribution over a fixed grid (`0.00, 0.05, ..., 1.00`)
+produced by a two-layer adapter (`d_report=256`). It is trained against
+outcomes sampled from the frozen answer policy using the risk form of the
+proper score: the expected report is trained by squared error against the
+empirical outcome mean, on a stored rollout batch (the proposal's rollout
+store). Three implementation choices mattered:
+
+- A single linear report head could not compute the softmax-like success
+  probability from the hidden state; a deeper adapter tracks condition changes.
+- Training online on fresh samples recovered only a few percent of the
+  condition effect; training offline on a stored rollout batch recovered about
+  a quarter and raised within-question sign agreement to ~0.65.
+- The Brier helper double-expanded columnar probabilities, corrupting the
+  baseline and augmented scores. Fixed; an informative synthetic report now
+  yields a positive incremental Brier.
+
+E2 outcome (local, with the fixes): the report tracks conditions (within-question
+sign agreement 0.62-0.72, correlation ~0.31) but the output-probability baseline
+is stronger (Brier ~0.14 versus ~0.26) and the incremental Brier is ~0 for every
+arm. C does not improve reporting over B. In this toy, success is defined by
+sampling from the answer policy, so the policy's own probabilities are a
+sufficient predictor and the native report has no room to add.
 
 ## Endpoints
 
@@ -186,9 +205,17 @@ success changes and report changes).
 
 Implemented and tested: world semantics (including `irrelevant_swap_all` and
 `swap_scale`), adapters and gradient scopes, warm start with per-step binding
-resampling, arms A-E, reporting updates, E1/E2 runners, CLI flags for the
-informative regime, and Slurm jobs. E1 is confirmed on the cluster (5 seeds):
-C improves generalization to fresh bindings over B, with arm E now available to
-separate the consistency objective from extra supervision. Next: run E2 with
-arms A-E and the confidence reporter. The proposal's decision gates (G0-G5)
-still apply.
+resampling, arms A-E, the rollout-store reporting trainer, E1/E2 runners, CLI
+flags for the informative regime, and Slurm jobs.
+
+E1 is confirmed on the cluster (5 seeds): C improves generalization to fresh
+bindings over B by ~2.6 points, with arm E available to separate the
+consistency objective from extra supervision.
+
+E2 is negative in the toy: with the fixed reporting stack, the report tracks
+condition changes but does not add information beyond the output-probability
+baseline, and C does not beat B. Because success is defined by sampling from
+the answer policy, the policy's own probabilities are a sufficient predictor.
+Before scaling to a real model, the toy needs a reporting target that the
+policy's output distribution cannot fully determine, or the claim must be
+restricted to calibration rather than added information.

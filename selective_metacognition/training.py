@@ -212,7 +212,15 @@ def sample_outcomes(
 
 
 def train_report(config: ToyConfig, world: World, model: Selector, seed: int) -> Selector:
-    """Train the report head against frozen-policy outcomes (proposal section 6.3)."""
+    """Collect a rollout store, then train the report head offline (section 6.6).
+
+    The proposal's reward is the proper score ``-(c - Y)**2`` for a sampled
+    report ``c``.  The toy minimizes the risk form of the same score: the
+    expected report ``E[c]`` is trained by squared error against the empirical
+    outcome mean.  Training on a stored rollout batch (rather than fresh online
+    samples) was necessary for the report to track condition changes; the store
+    is keyed by the frozen checkpoint through its hidden states.
+    """
 
     generator = torch.Generator().manual_seed(seed)
     set_report_trainable(model)
@@ -223,25 +231,36 @@ def train_report(config: ToyConfig, world: World, model: Selector, seed: int) ->
     )
     model.eval()
 
-    for step in range(config.report_steps):
-        subjects, relations = sample_batch(config, world.train_ids, generator, world.device)
-        assignments = _bindings(world, generator, step, 30_000)
-        name = REPORT_CONDITIONS[int(torch.randint(len(REPORT_CONDITIONS), (1,), generator=generator))]
-        memory, correct = world.condition(
-            subjects,
-            relations,
-            name,
-            seed=int(generator.initial_seed()) + step,
-            assignments=assignments,
-        )
-        with torch.no_grad():
-            policy = model.policy(memory, relations)
-            outcomes = sample_outcomes(
-                policy, correct, config.outcomes_per_item, generator
+    # 1) rollout store: hidden states and outcome means under the frozen policy.
+    features: list[torch.Tensor] = []
+    targets: list[torch.Tensor] = []
+    with torch.no_grad():
+        for step in range(config.report_collect_steps):
+            subjects, relations = sample_batch(config, world.train_ids, generator, world.device)
+            assignments = _bindings(world, generator, step, 30_000)
+            name = REPORT_CONDITIONS[
+                int(torch.randint(len(REPORT_CONDITIONS), (1,), generator=generator))
+            ]
+            memory, correct = world.condition(
+                subjects,
+                relations,
+                name,
+                seed=int(generator.initial_seed()) + step,
+                assignments=assignments,
             )
-            target = outcomes.mean(dim=1)
-        report = model.report_distribution(memory, relations)
-        loss = (report * (grid[None, :] - target[:, None]) ** 2).sum(dim=-1).mean()
+            policy = model.policy(memory, relations)
+            features.append(model.hidden(memory, relations))
+            outcomes = sample_outcomes(policy, correct, config.outcomes_per_item, generator)
+            targets.append(outcomes.mean(dim=1))
+    features = torch.cat(features)
+    targets = torch.cat(targets)
+
+    # 2) offline risk minimization on the store.
+    for _ in range(config.report_steps):
+        index = torch.randint(0, len(features), (config.report_batch,), generator=generator)
+        report = model.report_distribution_from_hidden(features[index])
+        expected = (report * grid[None, :]).sum(dim=-1)
+        loss = ((expected - targets[index]) ** 2).mean()
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()

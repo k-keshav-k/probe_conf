@@ -66,7 +66,14 @@ class Selector(nn.Module):
         self.blocks = nn.ModuleList(Block(config) for _ in range(config.n_layers))
         self.ln_final = nn.LayerNorm(config.d_model)
         self.answer_head = nn.Linear(config.d_model, config.n_answers, bias=False)
-        self.report_head = nn.Linear(config.d_model, len(config.confidence_grid), bias=False)
+        modules: list[nn.Module] = [
+            nn.Linear(config.d_model, config.d_report),
+            nn.GELU(),
+        ]
+        for _ in range(config.report_layers - 1):
+            modules.extend([nn.Linear(config.d_report, config.d_report), nn.GELU()])
+        modules.append(nn.Linear(config.d_report, len(config.confidence_grid)))
+        self.report_head = nn.Sequential(*modules)
 
     def hidden(self, memory: torch.Tensor, relation_ids: torch.Tensor) -> torch.Tensor:
         tokens = torch.stack([self.memory_proj(memory), self.relation_emb(relation_ids)], dim=1)
@@ -85,7 +92,10 @@ class Selector(nn.Module):
         return torch.softmax(self.answer_logits(memory, relation_ids) / temperature, dim=-1)
 
     def report_distribution(self, memory: torch.Tensor, relation_ids: torch.Tensor) -> torch.Tensor:
-        return torch.softmax(self.report_logits(memory, relation_ids), dim=-1)
+        return self.report_distribution_from_hidden(self.hidden(memory, relation_ids))
+
+    def report_distribution_from_hidden(self, hidden: torch.Tensor) -> torch.Tensor:
+        return torch.softmax(self.report_head(hidden), dim=-1)
 
     @torch.no_grad()
     def expected_report(self, memory: torch.Tensor, relation_ids: torch.Tensor) -> torch.Tensor:
@@ -118,6 +128,8 @@ def set_retrieval_trainable(model: nn.Module) -> None:
 
 
 def set_report_trainable(model: nn.Module) -> None:
+    """Freeze the retrieval model; train only the reporting adapter."""
+
     set_requires_grad(model, ["report_head"])
 
 
