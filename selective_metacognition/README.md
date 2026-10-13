@@ -180,12 +180,26 @@ store). Three implementation choices mattered:
   baseline and augmented scores. Fixed; an informative synthetic report now
   yields a positive incremental Brier.
 
-E2 outcome (local, with the fixes): the report tracks conditions (within-question
-sign agreement 0.62-0.72, correlation ~0.31) but the output-probability baseline
-is stronger (Brier ~0.14 versus ~0.26) and the incremental Brier is ~0 for every
-arm. C does not improve reporting over B. In this toy, success is defined by
-sampling from the answer policy, so the policy's own probabilities are a
-sufficient predictor and the native report has no room to add.
+E2 outcome (cluster, 5 seeds, with the fixed reporting stack):
+
+| Arm | clean top-1 | report Brier | baseline Brier | incremental Brier | sq_err |
+| --- | --- | --- | --- | --- | --- |
+| A | 0.588 | 0.255 | 0.136 | +0.00000 | 0.147 |
+| B | 0.617 | 0.261 | 0.134 | +0.00003 | 0.153 |
+| C | 0.641 | 0.255 | 0.137 | +0.00000 | 0.137 |
+| D | 0.638 | 0.259 | 0.137 | +0.00000 | 0.142 |
+| E | 0.640 | 0.262 | 0.136 | +0.00004 | 0.149 |
+
+The report tracks condition changes (within-question sign agreement ~0.60) and
+C's report is better calibrated than B's and E's (C - B sq_err -0.016, C - E
+-0.011, both 5/5 seeds). But the primary endpoint fails: the output-probability
+baseline is much stronger than the report and the incremental Brier is ~0 for
+every arm. C does not improve reporting over B on added information. Because
+success is defined by sampling from the answer policy, the policy's own
+probabilities are a sufficient predictor; the toy cannot test added
+information. The next experiment must make the target depend on something the
+output distribution cannot see (a prospective target or a hidden reliability
+variable).
 
 ## Endpoints
 
