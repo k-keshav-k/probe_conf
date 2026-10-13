@@ -61,10 +61,12 @@ def _bindings(world: World, generator: torch.Generator, step: int, offset: int) 
     """Fresh bindings for the training batch (proposal section 8.1).
 
     Resampling every step prevents memorizing the fixed subject/relation table;
-    the model must read the relation component from the memory.
+    the model must read the relation component from the memory.  With
+    ``config.spurious > 0``, some bindings carry a spurious correlation that
+    tempts the model to use irrelevant components.
     """
 
-    return world.resample_assignments(int(generator.initial_seed()) + offset + step)
+    return world.training_assignments(int(generator.initial_seed()) + offset + step)
 
 
 def warm_start(config: ToyConfig, world: World, model: Selector, seed: int) -> Selector:
@@ -132,7 +134,7 @@ def train_retrieval(
             swapped_memory, _ = world.condition(
                 subjects,
                 relations,
-                "irrelevant_swap",
+                "irrelevant_swap_all",
                 seed=int(generator.initial_seed()) + step,
                 assignments=assignments,
             )

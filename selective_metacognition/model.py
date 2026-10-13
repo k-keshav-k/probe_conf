@@ -108,8 +108,11 @@ def set_all_trainable(model: nn.Module) -> None:
 def set_retrieval_trainable(model: nn.Module) -> None:
     """Freeze the base and down projections; train gate/up adapters only."""
 
+    layers = model.config.adapter_layers or (model.config.n_layers - 1,)
     patterns: list[str] = []
-    for layer in model.config.adapter_layers:
+    for layer in layers:
+        if not 0 <= layer < model.config.n_layers:
+            raise ValueError(f"adapter layer {layer} outside [0, {model.config.n_layers})")
         patterns.extend([f"blocks.{layer}.gate.lora_", f"blocks.{layer}.up.lora_"])
     set_requires_grad(model, patterns)
 

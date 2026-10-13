@@ -37,11 +37,19 @@ class World:
         self.answer_codes = (codes / codes.norm(dim=1, keepdim=True)).to(self.device)
 
         maps = torch.zeros(config.n_relations, config.memory_dim, config.code_dim)
+        shared = torch.randn(config.memory_dim, config.code_dim, generator=generator)
+        shared = shared / shared.norm(dim=0, keepdim=True).clamp_min(1e-6)
         for relation in range(config.n_relations):
-            block = torch.randn(config.code_dim, config.code_dim, generator=generator)
-            q, _ = torch.linalg.qr(block)
-            start = relation * config.code_dim
-            maps[relation, start : start + config.code_dim, :] = q
+            if config.dense:
+                dense = torch.randn(config.memory_dim, config.code_dim, generator=generator)
+                maps[relation] = dense / dense.norm(dim=0, keepdim=True).clamp_min(1e-6)
+            else:
+                block = torch.randn(config.code_dim, config.code_dim, generator=generator)
+                q, _ = torch.linalg.qr(block)
+                start = relation * config.code_dim
+                maps[relation, start : start + config.code_dim, :] = q
+            if config.overlap:
+                maps[relation] = maps[relation] + config.overlap * shared
         self.relation_maps = maps.to(self.device)
 
         self.assignments = (
@@ -75,6 +83,26 @@ class World:
         return torch.randint(
             0, self.config.n_answers, (self.config.n_subjects, self.config.n_relations), generator=generator
         ).to(self.device)
+
+    def training_assignments(self, seed: int) -> torch.Tensor:
+        """Bindings for training, with optional spurious correlations.
+
+        With ``spurious > 0``, a fraction of subjects has the same answer in
+        every relation.  The unqueried components then carry information about
+        the queried answer, so a model trained only on clean data can learn to
+        rely on irrelevant components.  Selectivity training must break that
+        reliance; evaluation uses independent bindings where the shortcut fails.
+        """
+
+        generator = torch.Generator().manual_seed(seed)
+        assignments = torch.randint(
+            0, self.config.n_answers, (self.config.n_subjects, self.config.n_relations), generator=generator
+        )
+        if self.config.spurious > 0:
+            shared = torch.randint(0, self.config.n_answers, (self.config.n_subjects,), generator=generator)
+            mask = torch.rand(self.config.n_subjects, generator=generator) < self.config.spurious
+            assignments[mask] = shared[mask, None].expand(-1, self.config.n_relations)
+        return assignments.to(self.device)
 
     # -- memory -------------------------------------------------------------
     def component(self, answer_ids: torch.Tensor, relation: int) -> torch.Tensor:
@@ -114,6 +142,7 @@ class World:
         strength: float | None = None,
         seed: int = 0,
         assignments: torch.Tensor | None = None,
+        swap_scale: float = 1.0,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Return ``(memory, correct_answer)`` under a named condition.
 
@@ -149,7 +178,23 @@ class World:
         if name == "irrelevant_swap":
             current = answers[row, other]
             alternate = self._alternate_answers(current, generator, self.config.n_answers)
-            memory = memory - self._component_per_subject(current, other) + self._component_per_subject(alternate, other)
+            memory = (
+                memory
+                - self._component_per_subject(current, other)
+                + swap_scale * self._component_per_subject(alternate, other)
+            )
+        elif name == "irrelevant_swap_all":
+            for relation in range(self.config.n_relations):
+                rows = queried_relation != relation
+                if not bool(rows.any()):
+                    continue
+                current = answers[rows, relation]
+                alternate = self._alternate_answers(current, generator, self.config.n_answers)
+                memory[rows] = (
+                    memory[rows]
+                    - self.component(current, relation)
+                    + self.component(alternate, relation)
+                )
         elif name == "target_weaken":
             current = answers[row, queried_relation]
             memory = memory - (1.0 - strength) * self._component_per_subject(current, queried_relation)

@@ -59,9 +59,19 @@ sbatch --account="$TORCH_ACCOUNT" --chdir="$REPO" \
   selective_metacognition/cluster/02_e2.sbatch
 ```
 
-Overrides: `SEEDS`, `STEPS`, `WARM`, `ROUNDS` (E2), `OUT`. Results go to
-`$RUN_DIR/selective_metacognition/e1.json` and `e2.json`; logs are `sm-e1-*.out`
-and `sm-e2-*.out` in the repo root. Pull the results back with:
+Overrides: `SEEDS`, `STEPS`, `WARM`, `ROUNDS` (E2), `OUT`, and `EXTRA` for
+arbitrary CLI flags. The informative E1 regime:
+
+```bash
+EXTRA="--dense --overlap 0.5 --spurious 0.3 --code-dim 128 --d-model 32 --n-layers 1 --lambda-sel 5" \
+SEEDS=5 WARM=1000 STEPS=1200 \
+  sbatch --account="$TORCH_ACCOUNT" --chdir="$REPO" \
+  selective_metacognition/cluster/01_e1.sbatch
+```
+
+Results go to `$RUN_DIR/selective_metacognition/e1.json` and `e2.json`; logs
+are `sm-e1-*.out` and `sm-e2-*.out` in the repo root. Pull the results back
+with:
 
 ```bash
 SRC="kk6081@dtn.torch.hpc.nyu.edu:/scratch/kk6081/section33_v1/selective_metacognition/" \
@@ -89,6 +99,35 @@ Training **resamples the subject bindings every step**. A fixed table lets the
 model memorize memory-to-answer mappings; the first run did exactly that
 (train top-1 1.000, held-out 0.379). Resampling forces the model to learn the
 selection mechanism.
+
+### Making E1 informative
+
+With the proposal's disjoint-subspace default, ordinary training already
+achieves perfect selectivity (clean 1.000, irrelevant-swap damage 0.000), so
+arm C has nothing to fix. The informative regime adds two things:
+
+- **Compression and capacity limits**: dense relation maps, `overlap=0.5`,
+  `code_dim=128` into a 256-dim memory, `d_model=32`, one layer.
+- **Spurious correlations**: with `spurious > 0`, a fraction of training
+  subjects has the same answer in every relation. The unqueried components then
+  predict the queried answer, so a clean-trained model can learn to use them.
+  Evaluation uses independent bindings, where that shortcut fails.
+  Arm C's selectivity loss pairs each binding with one where **all** unqueried
+  components are decorrelated, which teaches reliance on the queried component.
+
+Local E1 result (3 seeds, `spurious=0.3`, `lambda_sel=5`, 1000 warm-start and
+1200 training steps), saved to
+`runs/selective_metacognition/e1_spurious03.json`:
+
+| Arm | clean top-1 (test) | clean top-1 (fresh) | selectivity S |
+| --- | --- | --- | --- |
+| B | 0.630 | 0.607 | 0.499 |
+| C | 0.650 | 0.630 | 0.487 |
+
+C resists the spurious shortcut better than B by about two points on held-out
+and fresh bindings, consistently across seeds, without constant-output collapse
+(`top1_share` 0.027). Selectivity S is flat. The gain is modest and could still
+reflect extra supervision, which is what arm E is for.
 
 ## Training arms
 
@@ -129,7 +168,11 @@ success changes and report changes).
 
 ## Status
 
-Implemented and tested: world semantics, adapters and gradient scopes, warm
-start, arms B/C/D, reporting updates, E1/E2 runners, and CPU tests. Results are
-reported separately once the runs complete; the proposal's decision gates
-(G0-G5) still apply.
+Implemented and tested: world semantics (including `irrelevant_swap_all` and
+`swap_scale`), adapters and gradient scopes, warm start with per-step binding
+resampling, arms B/C/D, reporting updates, E1/E2 runners, CLI flags for the
+informative regime, and Slurm jobs. The local E1 result is above. Next:
+confirm E1 on the cluster with more seeds, then run E2 (arms A-D with the
+confidence reporter) and add arm E (matched supervision) before attributing any
+gain to selectivity rather than extra supervision. The proposal's decision
+gates (G0-G5) still apply.

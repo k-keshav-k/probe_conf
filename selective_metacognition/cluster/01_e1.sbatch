@@ -32,6 +32,7 @@ cd "$REPO"
 SEEDS="${SEEDS:-3}"
 STEPS="${STEPS:-}"
 WARM="${WARM:-}"
+EXTRA="${EXTRA:-}"
 OUT="${OUT:-$RUN_DIR/selective_metacognition/e1.json}"
 ARGS=""
 if [ -n "$STEPS" ]; then ARGS="$ARGS --steps $STEPS"; fi
@@ -39,7 +40,7 @@ if [ -n "$WARM" ]; then ARGS="$ARGS --warm-start-steps $WARM"; fi
 
 mkdir -p "$(dirname "$OUT")"
 echo "host: $(hostname)"; nvidia-smi || true
-echo "seeds=$SEEDS steps=${STEPS:-default} warm=${WARM:-default}"
+echo "seeds=$SEEDS steps=${STEPS:-default} warm=${WARM:-default} extra=${EXTRA:-none}"
 echo "out=$OUT"
 
 srun apptainer exec --nv --overlay "$OVERLAY:ro" "$SIF" /bin/bash -c "
@@ -48,5 +49,5 @@ srun apptainer exec --nv --overlay "$OVERLAY:ro" "$SIF" /bin/bash -c "
   export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
   export OMP_NUM_THREADS=\$SLURM_CPUS_PER_TASK
   cd $REPO
-  python -m selective_metacognition.cli e1 --seeds $SEEDS $ARGS --out $OUT
+  python -m selective_metacognition.cli e1 --seeds $SEEDS $ARGS $EXTRA --out $OUT
 "

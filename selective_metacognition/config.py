@@ -48,13 +48,16 @@ class ToyConfig:
     dev_subjects: int = 64
     test_subjects: int = 64
     weaken_strength: float = 0.25
+    overlap: float = 0.0
+    dense: bool = False
+    spurious: float = 0.0
     # --- model -------------------------------------------------------------
     d_model: int = 128
     n_heads: int = 4
     d_hidden: int = 256
     n_layers: int = 2
     adapter_rank: int = 8
-    adapter_layers: tuple[int, ...] = (1,)
+    adapter_layers: tuple[int, ...] = ()  # empty = last block
     temperature: float = 1.0
     # --- retrieval training ------------------------------------------------
     batch: int = 128
@@ -77,8 +80,8 @@ class ToyConfig:
     seeds: int = 3
 
     def __post_init__(self) -> None:
-        if self.memory_dim != self.n_relations * self.code_dim:
-            raise ValueError("memory_dim must equal n_relations * code_dim")
+        if not self.dense and self.n_relations * self.code_dim > self.memory_dim:
+            raise ValueError("block mode needs n_relations * code_dim <= memory_dim")
         if self.train_subjects + self.dev_subjects + self.test_subjects > self.n_subjects:
             raise ValueError("train + dev + test subjects exceed n_subjects")
 

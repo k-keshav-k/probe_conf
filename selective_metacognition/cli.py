@@ -28,10 +28,20 @@ def _build_config(args) -> ToyConfig:
         "lambda_sel",
         "eta_consistency",
         "beta_kl",
+        "spurious",
+        "overlap",
+        "d_model",
+        "n_layers",
+        "code_dim",
+        "n_relations",
+        "memory_dim",
+        "adapter_rank",
     ):
         value = getattr(args, name, None)
         if value is not None:
             overrides[name] = value
+    if getattr(args, "dense", False):
+        overrides["dense"] = True
     return ToyConfig(**overrides)
 
 
@@ -118,6 +128,15 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--lambda-sel", type=float, default=None)
         command.add_argument("--eta-consistency", type=float, default=None)
         command.add_argument("--beta-kl", type=float, default=None)
+        command.add_argument("--spurious", type=float, default=None)
+        command.add_argument("--overlap", type=float, default=None)
+        command.add_argument("--dense", action="store_true")
+        command.add_argument("--d-model", type=int, default=None)
+        command.add_argument("--n-layers", type=int, default=None)
+        command.add_argument("--code-dim", type=int, default=None)
+        command.add_argument("--n-relations", type=int, default=None)
+        command.add_argument("--memory-dim", type=int, default=None)
+        command.add_argument("--adapter-rank", type=int, default=None)
         command.add_argument("--out", type=Path, default=None)
         command.set_defaults(func=function)
     return parser
