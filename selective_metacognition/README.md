@@ -124,10 +124,21 @@ Local E1 result (3 seeds, `spurious=0.3`, `lambda_sel=5`, 1000 warm-start and
 | B | 0.630 | 0.607 | 0.499 |
 | C | 0.650 | 0.630 | 0.487 |
 
-C resists the spurious shortcut better than B by about two points on held-out
-and fresh bindings, consistently across seeds, without constant-output collapse
-(`top1_share` 0.027). Selectivity S is flat. The gain is modest and could still
-reflect extra supervision, which is what arm E is for.
+Cluster E1 with 5 seeds (`runs/section33_v1/selective_metacognition/e1.json`),
+C - B differences:
+
+| Metric (fresh bindings) | Mean | SD | Seeds positive |
+| --- | --- | --- | --- |
+| clean top-1 | +0.026 | 0.014 | 5/5 |
+| valid-swap top-1 | +0.016 | 0.011 | 5/5 |
+| irrelevant-swap stability | -0.000 | 0.005 | 3/5 |
+| selectivity S | -0.014 | 0.004 | 0/5 |
+
+C resists the spurious shortcut better on independent bindings, consistently
+across seeds, without constant-output collapse (`top1_share` 0.03). The S
+metric declines because weakening an unqueried component removes the shortcut
+that B relies on, which confounds S in this regime. The gain is modest and
+could still reflect extra supervision, which is what arm E controls.
 
 ## Training arms
 
@@ -137,6 +148,11 @@ reflect extra supervision, which is what arm E is for.
 | B | correctness reward | same reporting training |
 | C | B plus the direct selectivity loss | same reporting training |
 | D | supervised retrieval plus selectivity loss | same reporting training |
+| E | B plus the same cross-entropy terms but no consistency term | same reporting training |
+
+E is the matched-supervision control: it sees the same decorrelated inputs as C
+but without the structured invariance term, so C - E isolates the consistency
+objective from extra data.
 
 After the shared warm start, every base parameter and the MLP down projections
 are frozen. Only the gate/up adapters in `adapter_layers` train during
@@ -170,9 +186,9 @@ success changes and report changes).
 
 Implemented and tested: world semantics (including `irrelevant_swap_all` and
 `swap_scale`), adapters and gradient scopes, warm start with per-step binding
-resampling, arms B/C/D, reporting updates, E1/E2 runners, CLI flags for the
-informative regime, and Slurm jobs. The local E1 result is above. Next:
-confirm E1 on the cluster with more seeds, then run E2 (arms A-D with the
-confidence reporter) and add arm E (matched supervision) before attributing any
-gain to selectivity rather than extra supervision. The proposal's decision
-gates (G0-G5) still apply.
+resampling, arms A-E, reporting updates, E1/E2 runners, CLI flags for the
+informative regime, and Slurm jobs. E1 is confirmed on the cluster (5 seeds):
+C improves generalization to fresh bindings over B, with arm E now available to
+separate the consistency objective from extra supervision. Next: run E2 with
+arms A-E and the confidence reporter. The proposal's decision gates (G0-G5)
+still apply.

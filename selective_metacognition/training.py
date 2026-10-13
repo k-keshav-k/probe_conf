@@ -105,7 +105,7 @@ def train_retrieval(
 ) -> Selector:
     """One retrieval-training arm: ``B`` correctness, ``C`` hybrid, ``D`` supervised."""
 
-    if arm not in ("B", "C", "D"):
+    if arm not in ("B", "C", "D", "E"):
         raise ValueError(f"unknown retrieval arm: {arm}")
     reference = reference if reference is not None else copy.deepcopy(model).eval()
     for parameter in reference.parameters():
@@ -151,8 +151,15 @@ def train_retrieval(
                     + config.beta_kl * reference_kl
                     + config.lambda_sel * selectivity.mean()
                 )
-            else:  # arm D: supervised retrieval plus the same selectivity loss
+            elif arm == "D":  # supervised retrieval plus the same selectivity loss
                 loss = selectivity.mean()
+            else:  # arm E: matched supervision, same cross-entropy but no consistency term
+                reward = clean_policy.gather(1, correct[:, None]).squeeze(1).mean()
+                loss = (
+                    -reward
+                    + config.beta_kl * reference_kl
+                    + config.lambda_sel * (ce_clean + ce_swapped).mean()
+                )
 
         optimizer.zero_grad()
         loss.backward()

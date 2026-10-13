@@ -42,6 +42,8 @@ def _build_config(args) -> ToyConfig:
             overrides[name] = value
     if getattr(args, "dense", False):
         overrides["dense"] = True
+    if getattr(args, "seeds", None) is not None:
+        overrides["seeds"] = args.seeds
     return ToyConfig(**overrides)
 
 
@@ -73,7 +75,7 @@ def _print_e2(report: dict) -> None:
     )
     print(header)
     print("-" * len(header))
-    for arm in ("A", "B", "C", "D"):
+    for arm in ("A", "B", "C", "D", "E"):
         metrics = report["aggregate"][arm]
         functional = metrics["functional"]["test"]
         reporting = metrics["reporting_test"]

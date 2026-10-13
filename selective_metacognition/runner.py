@@ -90,7 +90,7 @@ def run_e2(config: ToyConfig, seeds: int | None = None, device: torch.device | s
         model = Selector(config).to(device)
         warm_start(config, world, model, seed)
         results = {}
-        for arm in ("A", "B", "C", "D"):
+        for arm in ("A", "B", "C", "D", "E"):
             arm_model = copy.deepcopy(model)
             run_arm(config, world, arm_model, arm, seed)
             functional = evaluate_functional(arm_model, world, seed)
