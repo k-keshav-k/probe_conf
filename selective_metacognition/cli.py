@@ -1,0 +1,133 @@
+"""Command line entry points for the selective-metacognition toy.
+
+Examples::
+
+    python -m selective_metacognition.cli e1 --seeds 3 --steps 400
+    python -m selective_metacognition.cli e2 --seeds 3 --out runs/selective_metacognition/e2.json
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+from .config import ToyConfig
+
+
+def _build_config(args) -> ToyConfig:
+    overrides = {}
+    for name in (
+        "steps",
+        "warm_start_steps",
+        "batch",
+        "lr",
+        "warm_start_lr",
+        "report_steps",
+        "rounds",
+        "lambda_sel",
+        "eta_consistency",
+        "beta_kl",
+    ):
+        value = getattr(args, name, None)
+        if value is not None:
+            overrides[name] = value
+    return ToyConfig(**overrides)
+
+
+def _print_e1(report: dict) -> None:
+    header = (
+        f"{'arm':>10} {'split':>6} {'clean_top1':>10} {'irr_stab':>8} "
+        f"{'tgt_loss':>8} {'irr_loss':>8} {'select':>7} {'swap_top1':>9} {'top1_share':>10}"
+    )
+    print(header)
+    print("-" * len(header))
+    for arm in ("warm_start", "B", "C"):
+        for split in ("train", "test", "fresh"):
+            metrics = report["aggregate"][arm][split]
+            clean = metrics["clean"]["success_prob"]
+            target_loss = clean - metrics["target_weaken"]["success_prob"]
+            irr_loss = clean - metrics["irrelevant_weaken"]["success_prob"]
+            print(
+                f"{arm:>10} {split:>6} {metrics['clean']['top1']:>10.3f} "
+                f"{metrics['irrelevant_swap_stability']:>8.3f} {target_loss:>8.3f} "
+                f"{irr_loss:>8.3f} {metrics['selectivity']:>7.3f} "
+                f"{metrics['target_swap_valid']['top1']:>9.3f} {metrics['top1_share']:>10.3f}"
+            )
+
+
+def _print_e2(report: dict) -> None:
+    header = (
+        f"{'arm':>4} {'clean_top1':>10} {'select':>7} {'brier_rep':>9} "
+        f"{'brier_base':>10} {'increm':>7} {'sq_err':>7} {'sign_agr':>8}"
+    )
+    print(header)
+    print("-" * len(header))
+    for arm in ("A", "B", "C", "D"):
+        metrics = report["aggregate"][arm]
+        functional = metrics["functional"]["test"]
+        reporting = metrics["reporting_test"]
+        print(
+            f"{arm:>4} {functional['clean']['top1']:>10.3f} {functional['selectivity']:>7.3f} "
+            f"{reporting['brier_report']:>9.4f} {reporting['brier_baseline']:>10.4f} "
+            f"{reporting['incremental_brier']:>7.4f} {reporting['squared_error_estimate']:>7.4f} "
+            f"{reporting['same_question']['sign_agreement']:>8.3f}"
+        )
+
+
+def _save(report: dict, out: Path) -> None:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report, indent=2) + "\n")
+    print(f"wrote {out}")
+
+
+def cmd_e1(args) -> int:
+    from .runner import run_e1
+
+    report = run_e1(_build_config(args), seeds=args.seeds)
+    _print_e1(report)
+    if args.out:
+        _save(report, args.out)
+    return 0
+
+
+def cmd_e2(args) -> int:
+    from .runner import run_e2
+
+    report = run_e2(_build_config(args), seeds=args.seeds)
+    _print_e2(report)
+    if args.out:
+        _save(report, args.out)
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="selective_metacognition")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    for name, function in (("e1", cmd_e1), ("e2", cmd_e2)):
+        command = sub.add_parser(name, help=f"run toy experiment {name.upper()}")
+        command.add_argument("--seeds", type=int, default=3)
+        command.add_argument("--steps", type=int, default=None)
+        command.add_argument("--warm-start-steps", type=int, default=None)
+        command.add_argument("--batch", type=int, default=None)
+        command.add_argument("--lr", type=float, default=None)
+        command.add_argument("--warm-start-lr", type=float, default=None)
+        command.add_argument("--report-steps", type=int, default=None)
+        command.add_argument("--rounds", type=int, default=None)
+        command.add_argument("--lambda-sel", type=float, default=None)
+        command.add_argument("--eta-consistency", type=float, default=None)
+        command.add_argument("--beta-kl", type=float, default=None)
+        command.add_argument("--out", type=Path, default=None)
+        command.set_defaults(func=function)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
