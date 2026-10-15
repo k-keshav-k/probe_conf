@@ -1,76 +1,89 @@
-Selective MLP Retrieval for Metacognitive Confidence
-Toy experiments E1-E3
-15 October 2026
-Complete for the toy stage. The added-information claim is not supported.
+# Can better retrieval make confidence more useful?
 
----
+**Selective MLP retrieval: toy experiments E1-E3**
 
-# 1. What we tested
+Keshav Krishna · New York University · 15 October 2026
 
-The proposal asks whether training a functionally selective retrieval computation makes a model's own confidence report more useful. We built a controlled toy world with exact ground truth and ran three stages: **E1**, can selectivity be trained? **E2**, does the confidence report benefit? **E3**, can the report predict success *after a specified intervention* before the intervention is applied?
+**Main result.** Training improved some retrieval scores and brought confidence closer to the true success probability, but the report added very little to a predictor using answer probabilities. The added-information claim is not supported in this toy setting.
 
-# 2. Toy world and model
+## 1. Question and setup
 
-Each subject is a sum of four relation components, `h_s = sum_r T_r v_a(s,r)`. The model sees the memory and the queried relation and must read only the queried component. Seven conditions (clean, irrelevant swap, target and irrelevant weakening, valid swap, coherent false memory, sham) have exact ground truth. To give E1 headroom, 30% of training bindings are spurious: all relations share the same answer, so unqueried components predict the queried one. A model trained only on clean data learns that shortcut; evaluation uses independent bindings where it fails.
+Can a model learn to retrieve the relevant fact **and recognize when it will succeed**? E1 tests retrieval on new fact assignments; E2 tests confidence about the next sampled answer; E3 tests confidence about an answer after a specified future memory change.
 
-The model is a one-layer gated-MLP decoder (width 32) with an answer head and a report head (2 x 256 MLP over a 21-point grid). Rank-8 adapters on the gate and up projections of the last block are the only trainable retrieval parameters; the base and down projections are frozen after a shared supervised warm start. A dense, overlapping, compressive encoding plus the width limit make selection non-trivial.
+The artificial world has 512 subjects, four attributes and 128 answer symbols (384/64/64 train/development/test subjects). During training, 30% of bindings share one answer across all attributes, creating an irrelevant-information shortcut. Fresh assignments break that shortcut. Controlled changes weaken or swap asked or unasked attributes.
 
-# 3. Training arms and objectives
+The model has one decoder block (residual width 32; MLP width 256). Rank-8 adapters change only the MLP gate/up projections after a common supervised warm start. A separate two-layer reporting MLP (width 256) outputs confidence; **this is not native verbal confidence in a pretrained LLM**. E1-E3 average five training seeds; the probe diagnostic uses one.
 
-All arms share the same reporting training. Arm A freezes retrieval; B trains it with the correctness reward; C adds the selectivity loss; D uses supervised retrieval plus selectivity; E adds the same extra data as C but no consistency term.
+## 2. Training arms and objectives
 
-The answer policy is trained with correctness reward `J = E[Y] - beta KL(pi_theta || pi_ref)`, where `Y = 1[answer correct]` and `beta = 0.1`. The toy answer space is small, so `E[Y] = pi_theta(a_star | q, z)` is exact; the expected-reward gradient has the same expectation as a sampled policy gradient with no estimator variance. The selectivity loss pairs a binding `z` with one where all unqueried components are decorrelated (`T_irr z`):
+All arms use the same reporting procedure. C versus B tests the combined method; C versus E isolates the added consistency penalty.
 
-`L_sel = E[-log pi(a_star | q, z)] + E[-log pi(a_star | q, T_irr z)] + eta KL(sg[pi(. | q, z)] || pi(. | q, T_irr z))`
+| Arm | Retrieval training |
+| --- | --- |
+| A | Freeze retrieval; train only the reporter. |
+| B | Optimize correctness reward with a reference-policy penalty. |
+| C | B plus labeled examples with irrelevant facts changed, and a consistency penalty. |
+| D | Supervised correct-answer and consistency losses; no B reward. |
+| E | B plus C's labeled examples, without the consistency penalty. |
 
-Arm C minimizes `L_RL + lambda L_sel` (`lambda = 5`, `eta = 1`); the stop-gradient keeps the clean branch fixed. The report `c` predicts the probability that the next sampled answer is correct and is trained with the proper score `R(c, Y) = -(c - Y)^2` in risk form: squared error against the empirical mean of 8 draws from the frozen policy, on a stored rollout batch. Retrieval updates touch only the adapters; reporting updates only the report head.
+Let $p$ and $p'$ be answer distributions before and after changing unasked attributes; $p_{\rm ref}$ is the reference policy. Let $Y$ indicate correctness and $\mathrm{CE}(p)=-\log p(a_{\rm gold})$. The objectives are:
 
-# 4. E1: selectivity training transfers
+$$
+\begin{aligned}
+J_B &= \mathbb{E}[Y]-0.1\,D_{\rm KL}(p\parallel p_{\rm ref}),\qquad L_B=-J_B,\\
+L_{\rm sel} &= \mathrm{CE}(p)+\mathrm{CE}(p')+D_{\rm KL}(\operatorname{sg}[p]\parallel p'),\\
+L_C &= L_B+5L_{\rm sel},\qquad L_D=L_{\rm sel},\qquad
+L_E=L_B+5[\mathrm{CE}(p)+\mathrm{CE}(p')].
+\end{aligned}
+$$
 
-On fresh bindings, C beats B on clean top-1 by +0.026 and on valid-swap following by +0.016, positive in all five seeds (Figure 1, left). Irrelevant-swap stability is unchanged. The S metric declines, but it is confounded here: weakening an unqueried component removes the shortcut that B relies on. Caveat: in E2, the matched-supervision arm E matches C on greedy accuracy, so the E1 gain is not yet attributable to the consistency term alone.
+The consistency term discourages changes caused by irrelevant facts; $\operatorname{sg}$ stops the gradient through its clean branch only. D also differs in weighting and regularization, so it is not a perfectly isolated RL-versus-supervision comparison. The small answer set permits exact $\mathbb{E}[Y]=p(a_{\rm gold})$: retrieval uses an expected-reward gradient, not sampled GRPO.
 
-# 5. E2: no added reporting value
+The confidence reward is $R(c,Y)=-(c-Y)^2$. In practice, the reporter minimizes $L_{\rm report}=(c-\bar Y_8)^2$ against eight independent outcomes from a frozen answer policy. Confidence $c$ is the mean over 21 output values (0 to 1, step 0.05). Reporting gradients update only the report head; retrieval gradients update only the adapters.
 
-The ordinary baseline receives relation, top probability, entropy, and top-2 margin, but not the intervention identity; a privileged version is reported separately. Constant (0.5, train-rate) and recalibrated baselines are included, greedy and sampled success are separate, and false memories are evaluated separately.
+**Settings:** 1,000 warm-start steps; three rounds of 1,200 retrieval and 3,000 reporting steps; sampling temperature 1; 16 evaluation draws per item.
 
-| Arm | greedy | sampled | report | baseline | incremental | sq. prob. error |
+## 3. E1: retrieval improves, but attribution is limited
+
+On fresh assignments, C beats B by **2.6 percentage points in greedy accuracy** and **1.6 points in following valid fact swaps**, positive in all five seeds. Irrelevant-swap stability is unchanged. However, E nearly matches C in E2, so the consistency term's separate retrieval benefit is not established. The original selectivity score is confounded because weakening unasked attributes also removes B's shortcut.
+
+<!-- pagebreak -->
+
+## 4. E2: little added value from confidence
+
+The reporter predicts whether the next **sampled** answer will be correct. The ordinary baseline uses relation identity, maximum answer probability, entropy and top-two probability margin. It receives neither the gold answer nor the intervention label; a privileged baseline is separate. Coherent false memories are excluded from the main endpoint.
+
+**Reading the table.** Greedy accuracy scores the most likely answer; sampled success scores a draw from the answer distribution. Brier is squared error against correct/incorrect outcomes (lower is better; always saying 50% gives 0.250). **Added value** is baseline Brier minus Brier after adding confidence (higher is better). **Probability error** measures squared distance from true success probability, not calibration alone. Answer scores are clean; reporting scores cover the main conditions.
+
+| Arm | Greedy | Sampled | Report Brier | Baseline Brier | Added value | Probability error |
 | --- | --- | --- | --- | --- | --- | --- |
-| A | 0.588 | 0.408 | 0.267 | 0.181 | +0.00049 | 0.139 |
-| B | 0.617 | 0.439 | 0.276 | 0.183 | +0.00033 | 0.147 |
-| C | 0.641 | 0.421 | 0.268 | 0.182 | +0.00038 | 0.128 |
-| D | 0.638 | 0.419 | 0.269 | 0.181 | +0.00034 | 0.128 |
-| E | 0.640 | 0.438 | 0.275 | 0.182 | +0.00049 | 0.139 |
+| A | 58.8% | 40.8% | 0.267 | 0.181 | +0.00049 | 0.139 |
+| B | 61.7% | 43.9% | 0.276 | 0.182 | +0.00033 | 0.147 |
+| C | 64.1% | 42.1% | 0.268 | 0.182 | +0.00038 | 0.128 |
+| D | 63.8% | 41.9% | 0.269 | 0.181 | +0.00034 | 0.128 |
+| E | 64.0% | 43.8% | 0.274 | 0.182 | +0.00049 | 0.139 |
 
-The incremental Brier is negligible for every arm. C and D have the lowest squared probability error, in all five seeds (C - B -0.019, C - E -0.011), so selectivity training does move the report closer to the true success probability. But the reporter is weak in absolute terms: its raw Brier is worse than an always-0.5 predictor (0.250), and recalibration only brings it near the train-rate constant. C's greedy gain does not carry to sampled success, and E matches C. Coherent false memories stay confident (report about 0.19 vs actual 0.007).
+C's probability error improves over B by 0.019 and E by 0.011, in all five seeds. Yet its added value is only 0.00038, below E's. Every raw report is worse than always saying 50%; recalibration improves Brier to 0.225-0.230, still far behind the baseline. C's greedy gain does not extend to sampled success.
 
-![E1 per-seed transfer on fresh bindings and E2 squared probability error by arm.](figures/selective_metacognition/fig1_e1_e2.png)
+Tracking is partial: target weakening lowers C's actual success by 0.377 but confidence by only 0.105 (about 70% sign agreement). On separately evaluated false memories, confidence is about 19% versus actual success of 0.7%.
 
-# 6. E3: prospective reporting, fair comparison
+## 5. E3: predicting success before a change
 
-The reporter sees the **clean** state and a description of an intervention that will be applied after the report (type and strength), and predicts success under the post-intervention policy. Both predictors receive the same description; neither sees the post-intervention state. Training covers weakening strengths 0.2, 0.5, 0.8 and swap scales 1, 2; evaluation adds held-out strengths 0.35, 0.65 and scale 3.
+The reporter sees the **clean state plus the upcoming intervention's type and strength**. The baseline receives clean probability features and the same description. Neither sees the changed state. Training uses weakening strengths 0.2/0.5/0.8 and swap scales 1/2; unseen tests use 0.35/0.65 and scale 3. These are new strengths, not new intervention families.
 
-| Arm | report | baseline | incremental (test) | incremental (held-out) | sq. prob. error |
+| Arm | Report Brier | Baseline Brier | Added: seen strengths | Added: unseen strengths | Probability error |
 | --- | --- | --- | --- | --- | --- |
 | A | 0.243 | 0.173 | +0.00000 | +0.00010 | 0.125 |
 | B | 0.252 | 0.175 | +0.00001 | +0.00008 | 0.134 |
 | C | 0.245 | 0.175 | +0.00008 | +0.00040 | 0.119 |
 | E | 0.251 | 0.175 | +0.00012 | +0.00038 | 0.128 |
 
-![E3 incremental Brier by arm and the probe diagnostic on the clean hidden state.](figures/selective_metacognition/fig2_e3_probe.png)
+Errors are at seen strengths on test subjects; D was not run. On unseen strengths, C exceeds B's added value by 0.00033 (5/5 seeds), but E by only 0.00002 (2/5). Extra supervision remains a sufficient explanation; **no clear added-value benefit of the consistency penalty appears**. Fresh assignments also show little gain.
 
-Incremental value is negligible everywhere, including held-out strengths and fresh bindings. C - B on held-out strengths is +0.00033 (5/5 seeds), but C - E is +0.00002 (2/5): that small gain comes from the extra supervision E also receives, not from the consistency objective. C's report again has the lowest squared probability error (0.119).
+## 6. Diagnostic and conclusion
 
-# 7. Why it failed, and conclusion
+In a separate **one-seed** diagnostic on arms B/C/E, hidden-state probes also trail the baseline: Brier 0.236-0.237 for a linear probe, 0.204-0.211 for a neural probe trained on exact success probabilities, and 0.210-0.215 with sampled labels, versus 0.144-0.151 for the baseline. These ranges span arms, not confidence intervals. Exact labels do not close the gap, but probe failure **does not prove information is absent**; answer probabilities are themselves computed from the hidden state.
 
-Can any readout of the clean hidden state plus the intervention description predict post-intervention success better than the baseline? Held-out-subject probes (1 seed, arms B/C/E):
+**Conclusion:** the combined method improves some retrieval scores and probability estimation, but does not demonstrate useful reporting value beyond the tested probability baselines. Small mean gains are not equivalence proofs. Reporter learning, readout capacity and generalization remain unresolved. Scaling the same method needs a specific explanation and test of this failure, not just more compute.
 
-| Predictor | Brier vs outcomes | Squared error vs true p |
-| --- | --- | --- |
-| baseline (clean probabilities + description) | 0.144-0.151 | 0.043-0.047 |
-| linear probe on hidden + context | 0.236-0.237 | 0.130-0.139 |
-| MLP probe, true-probability target | 0.204-0.211 | 0.102-0.107 |
-| MLP probe, outcome-mean target (as the reporter sees) | 0.210-0.215 | 0.107-0.113 |
-
-Even an MLP trained directly on the true post-intervention probability is far worse than the baseline: the clean state does not carry item-specific fragility in a readable way, so the E3 failure is representational for the tested readouts.
-
-The added-information claim is not supported in the toy. Selectivity training improves retrieval on fresh bindings and moves the report closer to the true success probability, but adds no reporting information beyond clean probabilities plus the intervention description, and a real-model claim would need a state that carries item-specific fragility and a verbal report.
+**Evidence:** [E1](../runs/section33_v1/selective_metacognition/e1.json), [audited E2](../runs/section33_v1/selective_metacognition/e2.json), [E3](../runs/section33_v1/selective_metacognition/e3.json), [probe diagnostic](../runs/selective_metacognition/e3_probe_diagnostic.json), and [full proposal](SELECTIVE_MLP_METACOGNITION_PROPOSAL.md).

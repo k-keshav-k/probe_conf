@@ -89,3 +89,39 @@ interpretation in `results/FINDINGS.md`; per-run reports in
   preprocessing fitted once per outer training fold, pooled OOF AUROC +
   bootstrap CI, layer curves, per-relation breakdown, popularity-quintile Stage 2,
   residual diagnostic, permutation check.
+
+## 15 October 2026 — causal confidence training plan implementation
+
+Added `causal_confidence/`, the implementation of
+`report/CAUSAL_CONFIDENCE_TRAINING_PLAN.md`. This entry records the code, not
+new results; no 7B stage has been run yet.
+
+- `protocol.py` freezes the model (`Qwen/Qwen2.5-7B-Instruct` at revision
+  `a09a3545...`), audited relations, prompts, the 21-value report grammar,
+  sampling policy, partition sizes, six condition slots, mixture weights,
+  pair types, and the P0-P3 gates.
+- `data.py` builds subject-disjoint partitions from the section 33 cohort and
+  the PopQA source, with dedupe, reference audits, and a hashed manifest.
+- `episodes.py` and `interventions.py` implement retained-state branching,
+  middle-layer MLP channel attenuation, restoration, matched random and
+  other-group controls, and the contract checks (cache/full-run equivalence,
+  branch isolation, adapter gating, frozen parameters).
+- `outcomes.py` writes immutable correctness banks with the frozen matcher;
+  `reporters.py` provides the scalar diagnostic and the rank-8 native report
+  adapter with constrained greedy decoding; `objectives.py` implements the
+  point/pair losses, exact grid expectation, and the sampled REINFORCE
+  estimator; `baselines.py`, `evaluate.py`, and `mechanisms.py` cover
+  declared-information baselines, Brier/contrast/cluster bootstrap, and
+  report-branch interventions.
+- P0 regenerates the toy diagnostic rows (no toy checkpoints were retained)
+  and runs the reproduction/correctness positive controls. P1 checks the
+  episode contract and audits the discovery answer policy. P2 runs bounded
+  discovery and one locked validation. P3-P6 are gated stubs.
+- Tests: `tests/test_causal_confidence.py` implements the required
+  implementation checks, including exhaustive-enumeration agreement for the
+  grid expectation, policy-gradient agreement on a tiny categorical, cache
+  equivalence with a last-layer diagnostic, adapter isolation, frozen
+  parameters, Brier shapes, partition isolation, and the leakage scan.
+
+Cluster sequence: `causal_confidence/cluster/01_p0.sbatch` through
+`04_p2_validate.sbatch`; see `causal_confidence/cluster/README.md`.

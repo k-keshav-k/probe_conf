@@ -1,0 +1,119 @@
+{
+  "probability_A": {
+    "available_columns": [
+      "f__prob__top1__last_prompt",
+      "f__prob__top2__last_prompt",
+      "f__prob__margin__last_prompt",
+      "f__prob__entropy__last_prompt",
+      "f__prob__top10_mass__last_prompt",
+      "f__prob__top50_mass__last_prompt"
+    ],
+    "selected_columns": [],
+    "baseline_block_dimensions": {
+      "meta": 0,
+      "prob": 0,
+      "hproj": 1024
+    }
+  },
+  "probability_B": {
+    "available_columns": [
+      "f__prob__top1__answer_last_content",
+      "f__prob__top2__answer_last_content",
+      "f__prob__margin__answer_last_content",
+      "f__prob__entropy__answer_last_content",
+      "f__prob__top10_mass__answer_last_content",
+      "f__prob__top50_mass__answer_last_content",
+      "f__prob__top1__last_prompt",
+      "f__prob__top2__last_prompt",
+      "f__prob__margin__last_prompt",
+      "f__prob__entropy__last_prompt",
+      "f__prob__top10_mass__last_prompt",
+      "f__prob__top50_mass__last_prompt",
+      "f__prob__seq_logprob_sum__answer_last_content",
+      "f__prob__seq_logprob_mean__answer_last_content",
+      "f__prob__seq_logprob_min__answer_last_content",
+      "f__prob__seq_entropy_mean__answer_last_content",
+      "f__prob__seq_length__answer_last_content"
+    ],
+    "selected_columns": [],
+    "baseline_block_dimensions": {
+      "meta": 0,
+      "prob_after": 0,
+      "hproj_after": 1024
+    }
+  },
+  "trackA_answer_length_in_baseline": {
+    "selected_columns": [
+      "f__meta__rel_father",
+      "f__meta__meta_content_length"
+    ],
+    "values": [
+      [
+        1.0,
+        1.0
+      ],
+      [
+        1.0,
+        7.0
+      ]
+    ]
+  },
+  "trackA_power_deltas": [
+    [],
+    []
+  ],
+  "power_large_sample": [
+    {
+      "n_subjects": 100,
+      "delta_auc_mean": 0.04,
+      "delta_brier_mean": 0.01,
+      "p_useful_improvement_supported": 0.3633,
+      "p_useful_improvement_ruled_out": 0.2903,
+      "p_harm_supported": 0.156,
+      "p_inconclusive": 0.1904
+    },
+    {
+      "n_subjects": 1000000,
+      "delta_auc_mean": 0.04,
+      "delta_brier_mean": 0.01,
+      "p_useful_improvement_supported": 0.4417,
+      "p_useful_improvement_ruled_out": 0.3646,
+      "p_harm_supported": 0.1583,
+      "p_inconclusive": 0.0354
+    }
+  ],
+  "candidate_join_reproduction": {
+    "input_samples": 8,
+    "joined_samples": 4,
+    "input_candidates": 2,
+    "joined_candidates": 1
+  },
+  "saved_test_sample_counts": {
+    "label_rows": 207,
+    "label_multiplicity_sum": 400,
+    "prediction_rows": 205,
+    "prediction_multiplicity_sum": 396,
+    "questions_with_missing_samples": 2,
+    "probability_prediction_unique_values": [
+      0.07658477165841235
+    ]
+  },
+  "flatten_sharpen_invariance": {
+    "original_output": [
+      1.0,
+      10.0
+    ],
+    "equivalent_output": [
+      1.0,
+      10.0
+    ],
+    "intervened_output": [
+      1.0,
+      10.0
+    ],
+    "equivalent_intervened_output": [
+      0.8357216119766235,
+      26.427839279174805
+    ]
+  }
+}

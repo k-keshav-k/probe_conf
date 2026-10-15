@@ -1,0 +1,80 @@
+{
+  "thresholds": {
+    "min_relevant_damage": 0.05,
+    "min_selectivity": 0.03
+  },
+  "n_subjects": 40,
+  "damage_relevant": {
+    "mean": 0.0171875,
+    "ci": [
+      0.003125,
+      0.0328125
+    ]
+  },
+  "damage_other": {
+    "mean": 0.0265625,
+    "ci": [
+      0.009375,
+      0.046875
+    ]
+  },
+  "damage_random": {
+    "mean": 0.009375,
+    "ci": [
+      -0.0125,
+      0.03125
+    ]
+  },
+  "selectivity_vs_other": {
+    "mean": -0.009375,
+    "ci": [
+      -0.025,
+      0.0078125
+    ]
+  },
+  "selectivity_vs_random": {
+    "mean": 0.0078125,
+    "ci": [
+      -0.0078125,
+      0.025
+    ]
+  },
+  "clean_success": {
+    "mean": 0.2375,
+    "ceiling_share": 0.075,
+    "floor_share": 0.5375
+  },
+  "confidence_parse_rate": 1.0,
+  "confidence_diagnostic": {
+    "relevant": {
+      "mean": 0.0,
+      "ci": [
+        0.0,
+        0.0
+      ]
+    },
+    "other": {
+      "mean": -2.125,
+      "ci": [
+        -5.3125,
+        0.0
+      ]
+    },
+    "random": {
+      "mean": 0.0,
+      "ci": [
+        0.0,
+        0.0
+      ]
+    }
+  },
+  "passed": false,
+  "reason": "selectivity gate not met; revise the intervention and repeat development",
+  "collection": {
+    "path": "/scratch/kk6081/section33_v1/retrieval_monitoring/pilot_rows.jsonl",
+    "rows_written": 2880
+  },
+  "model": "Qwen/Qwen2.5-7B-Instruct",
+  "layer": 8,
+  "alpha": 25.0
+}

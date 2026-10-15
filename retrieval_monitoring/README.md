@@ -11,8 +11,11 @@ confirmatory code in `section33/`.
 | S0 repaired text baselines | Implemented. Run on the frozen confirmatory cohort. Result: `report/RETRIEVAL_MONITORING_S0_RESULT.json` |
 | S1 retained-state contract | Implemented with the mask fix. Passed on 0.5B and 7B. |
 | S2 toy world | Implemented with low-rank relation operators. Passed on 3 seeds. |
-| S3 40-subject pilot | Ran once. Gate failed: obscure subjects sat at the success floor and `alpha=0.5` moved the state by ~1% of its norm. Pair fetch now orders by sitelinks and a development sweep (`sweep`) picks layer/rank/alpha before the rerun. |
-| M1 / M2 / M3 | Not implemented. These wait on the S3 selectivity gate. |
+| S3 40-subject pilot | Failed again after the sweep: relevant damage 0.0172, selectivity over random 0.0078; required 0.05 and 0.03. The 33-cell headroom subset does not rescue selectivity. Stop this attenuation family as the working manipulation. |
+| M1 / M2 / M3 | Not implemented. On hold; the failed S3 gate has not been relaxed. |
+| T0–T4 selective-retrieval training | Priority proposal: train gate/up selection with correctness RL plus a direct selectivity loss; train confidence against independent outcomes. Toy comparison first, including supervised and ordinary RL controls. Not implemented or run. |
+| T5 competence crossover | Evaluation of reporting transfer beyond shared question difficulty. Self-versus-other competence comparisons already have precedents; crossover alone is not the novelty claim. |
+| R0–R3 donor stress test | Deferred; detailed design archived. Donor patching alone is not a novelty claim. |
 
 ## Modules
 
@@ -30,7 +33,10 @@ confirmatory code in `section33/`.
 | `runner` | GPU runner for the S3 pilot |
 | `cli` | Command line entry points |
 
-## Commands
+## Existing commands (historical attenuation workflow)
+
+The S3 sweep/pilot commands below reproduce the previous workflow; they are
+not the recommended next run. Follow the revised report's T0–T5 priorities.
 
 ```bash
 # S0: repaired baselines (CPU, saved data)
@@ -86,7 +92,7 @@ The question-only within-question AUROC is 0.500 on Track B (no signal), and
 the question-plus-candidate baseline reaches 0.663. This is a tested baseline,
 not the strongest possible input-only observer.
 
-## S3 development log
+## S3 development log (historical)
 
 First pilot (Qwen2.5-7B-Instruct, layer 13, rank 2, alpha 0.5, 40 subjects):
 
@@ -119,11 +125,22 @@ the sweep and the pilot must be rerun.
 
 ## What the plan asks next
 
-1. Refetch the pairs CSV (famous subjects), run the S3 sweep, and pick a
-   setting with positive relevant damage and clear selectivity over the
-   controls.
-2. Rerun the 40-subject pilot with those settings. The gate needs
-   `damage_relevant >= 0.05` and `selectivity_vs_random >= 0.03` in answer
-   success.
-3. Only after the selectivity gate: M1 native reporting, M2 learned reporting,
-   M3 pathway tests.
+The October 12 report supersedes the sweep-and-rerun recommendation above.
+The saved layer-8, alpha-25 pilot fails both original thresholds. Preserve it
+as a negative development result, not an introspection result.
+
+1. Archive S3 and close the geometric diagnosis with a bounded saved-state
+   audit. Low projected variance alone does not establish causal irrelevance.
+2. Audit references and short-answer scoring. Fix the branch mismatch:
+   `answer_suffix` uses a bare question, but `confidence_suffix` receives the
+   named question. Validate both against the same intervened answer policy.
+3. Following `meet.md`, test whether training functional MLP selectivity makes
+   native confidence more reliable. Start with the controlled toy comparison:
+   ordinary RL, RL plus selectivity loss, and matched supervised controls.
+4. Transfer only after selectivity and reporting benefits both appear. Use
+   competence crossovers to evaluate the trained reporter beyond difficulty;
+   crossover itself has prior precedents. Donor interference stays optional.
+
+See [the authoritative revised report](../report/RETRIEVAL_MONITORING_PLAN.md)
+for budgets, controls, scoring, and stopping rules. This documentation update
+does not change the collector or implement the proposed training experiments.

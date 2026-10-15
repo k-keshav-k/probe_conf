@@ -11,6 +11,8 @@ Start with `report/REPORT.html` and `report/AUDIT.md`.
 ## Files
 
 - `meet.txt` / `meet.md` — formatted meeting notes (original preserved in `meet.original.txt`)
+- [Causal confidence training plan](report/CAUSAL_CONFIDENCE_TRAINING_PLAN.md) — proposed follow-up to the selective-metacognition toy: objectives, staged experiments, controls, and decision gates
+- `causal_confidence/` — implementation of that plan: frozen protocol, subject-disjoint data splits, retained-state episodes, channel interventions, immutable outcome banks, scalar and native reporters, exact/pair objectives, baselines, clustered evaluation, and the P0/P1/P2 runners. P3-P6 are gated. See `causal_confidence/cluster/README.md` for cluster submission.
 - `LITERATURE.md` — literature notes: geometric recall, ROME lineage, confidence
   vs. difficulty, internal-state probes
 - `PLAN.md` — experiment plan, hypotheses, feature design, decision rules
@@ -64,3 +66,16 @@ node tests/check_explainer.js
 .venv/bin/python -B scripts/make_report_html.py
 .venv/bin/python -B scripts/make_report_pdf.py
 ```
+
+## Causal confidence package
+
+```bash
+.venv/bin/python -m causal_confidence.smoke          # fast contract checks on CPU
+.venv/bin/python -m causal_confidence.smoke --end-to-end   # + Qwen2.5-0.5B P1/P2 mechanics
+.venv/bin/python -m pytest tests/test_causal_confidence.py -q
+```
+
+Stage commands for the 7B runs (`setup`, `p0`, `p1`, `p2-discover`,
+`p2-validate`, `audit`) are documented in
+`causal_confidence/cluster/README.md`. P3-P6 refuse to run before the P2
+gate passes.
