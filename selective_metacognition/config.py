@@ -47,6 +47,19 @@ OBSERVABLE_CONDITIONS: tuple[str, ...] = (
 )
 FALSE_MEMORY_CONDITIONS: tuple[str, ...] = ("false_memory",)
 
+# E3: prospective interventions.  The reporter sees a description of an
+# intervention that will be applied after the report and predicts success
+# under the post-intervention policy.
+PROSPECTIVE_TYPES: tuple[str, ...] = (
+    "target_weaken",
+    "irrelevant_weaken",
+    "irrelevant_swap",
+)
+PROSPECTIVE_TRAIN_STRENGTHS: tuple[float, ...] = (0.2, 0.5, 0.8)
+PROSPECTIVE_TRAIN_SCALES: tuple[float, ...] = (1.0, 2.0)
+PROSPECTIVE_HELDOUT_STRENGTHS: tuple[float, ...] = (0.35, 0.65)
+PROSPECTIVE_HELDOUT_SCALES: tuple[float, ...] = (3.0,)
+
 
 @dataclass
 class ToyConfig:
@@ -72,6 +85,7 @@ class ToyConfig:
     adapter_layers: tuple[int, ...] = ()  # empty = last block
     d_report: int = 256
     report_layers: int = 2
+    report_context_dim: int = 0  # E3: intervention description width
     temperature: float = 1.0
     # --- retrieval training ------------------------------------------------
     batch: int = 128

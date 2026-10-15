@@ -92,6 +92,28 @@ def _print_e2(report: dict) -> None:
         )
 
 
+def _print_e3(report: dict) -> None:
+    header = (
+        f"{'arm':>4} {'clean':>7} {'report':>8} {'recal':>7} {'base':>8} {'incr':>10} "
+        f"{'incr_held':>10} {'sq_prob':>8} {'const':>7}"
+    )
+    print(header)
+    print("-" * len(header))
+    for arm in ("A", "B", "C", "E"):
+        metrics = report["aggregate"][arm]
+        functional = metrics["functional"]["test"]
+        prospective = metrics["prospective_test"]
+        heldout = metrics["prospective_heldout"]
+        print(
+            f"{arm:>4} {functional['clean']['success_prob']:>7.3f} "
+            f"{prospective['brier_report']:>8.4f} {prospective['brier_report_recalibrated']:>7.4f} "
+            f"{prospective['brier_ordinary_baseline']:>8.4f} "
+            f"{prospective['incremental_brier']:>+10.5f} {heldout['incremental_brier']:>+10.5f} "
+            f"{prospective['squared_probability_error']:>8.4f} "
+            f"{prospective['brier_constant_rate']:>7.4f}"
+        )
+
+
 def _save(report: dict, out: Path) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=2) + "\n")
@@ -118,11 +140,25 @@ def cmd_e2(args) -> int:
     return 0
 
 
+def cmd_e3(args) -> int:
+    from .config import PROSPECTIVE_TYPES
+    from .runner import run_e3
+
+    config = _build_config(args)
+    if config.report_context_dim == 0:
+        config.report_context_dim = len(PROSPECTIVE_TYPES) + 1
+    report = run_e3(config, seeds=args.seeds)
+    _print_e3(report)
+    if args.out:
+        _save(report, args.out)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="selective_metacognition")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    for name, function in (("e1", cmd_e1), ("e2", cmd_e2)):
+    for name, function in (("e1", cmd_e1), ("e2", cmd_e2), ("e3", cmd_e3)):
         command = sub.add_parser(name, help=f"run toy experiment {name.upper()}")
         command.add_argument("--seeds", type=int, default=3)
         command.add_argument("--steps", type=int, default=None)

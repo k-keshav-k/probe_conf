@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from .config import CONDITIONS, REPORT_CONDITIONS, ToyConfig
+from .config import CONDITIONS, PROSPECTIVE_TYPES, REPORT_CONDITIONS, ToyConfig
 from .model import Selector
 from .world import World
 
@@ -170,10 +170,14 @@ def _features(rows: list[dict], n_relations: int, include_condition: bool = Fals
         relation = np.zeros(n_relations)
         relation[row["relation"]] = 1.0
         parts = [relation, [row["max_prob"], row["entropy"], row["margin"]]]
-        if include_condition:
+        if include_condition and "condition" in row:
             condition = np.zeros(len(REPORT_CONDITIONS))
             condition[REPORT_CONDITIONS.index(row["condition"])] = 1.0
             parts.append(condition)
+        if "intervention" in row:
+            intervention = np.zeros(len(PROSPECTIVE_TYPES))
+            intervention[PROSPECTIVE_TYPES.index(row["intervention"])] = 1.0
+            parts.append(np.concatenate([intervention, [row["strength"]]]))
         features.append(np.concatenate(parts))
     return np.asarray(features, dtype=np.float64)
 
@@ -283,6 +287,9 @@ def _squared_error_estimate(report: float, outcomes: np.ndarray) -> float:
 
 def _same_question_tracking(test_rows: list[dict]) -> dict:
     """Within-item report changes versus success changes, by condition pair."""
+
+    if not test_rows or "condition" not in test_rows[0]:
+        return {"n": 0}
 
     lookup: dict[tuple[int, int, str], dict] = {}
     for row in test_rows:

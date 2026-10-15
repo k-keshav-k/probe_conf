@@ -1,4 +1,4 @@
-"""Runners for the staged toy experiments E1 and E2."""
+"""Runners for the staged toy experiments E1, E2, and E3."""
 
 from __future__ import annotations
 
@@ -17,8 +17,70 @@ from .evaluation import (
     reporting_metrics,
 )
 from .model import Selector
+from .prospective import (
+    collect_prospective_rows,
+    heldout_specs,
+    train_prospective_report,
+    training_specs,
+)
 from .training import run_arm, train_retrieval, warm_start
 from .world import World
+
+
+def run_e3(config: ToyConfig, seeds: int | None = None, device: torch.device | str | None = None) -> dict:
+    """Prospective reporting: predict post-intervention success from the clean state.
+
+    Both predictors receive the same intervention description; neither sees the
+    post-intervention state.  The report is trained on the training strengths
+    and families and evaluated on those and on held-out strengths.
+    """
+
+    seeds = config.seeds if seeds is None else seeds
+    device = _device(device)
+    per_seed = {}
+    for seed in range(seeds):
+        world = World(config, seed=seed, device=device)
+        torch.manual_seed(seed)
+        model = Selector(config).to(device)
+        warm_start(config, world, model, seed)
+        results = {}
+        for arm in ("A", "B", "C", "E"):
+            arm_model = copy.deepcopy(model)
+            if arm != "A":
+                train_retrieval(config, world, arm_model, arm, seed)
+            train_prospective_report(config, world, arm_model, seed)
+            fresh = world.resample_assignments(seed + 999)
+            train_rows = collect_prospective_rows(
+                arm_model, world, world.train_ids, specs=training_specs(), seed=seed
+            )
+            test_rows = collect_prospective_rows(
+                arm_model, world, world.test_ids, specs=training_specs(), seed=seed + 7
+            )
+            heldout_rows = collect_prospective_rows(
+                arm_model, world, world.test_ids, specs=heldout_specs(), seed=seed + 11
+            )
+            fresh_rows = collect_prospective_rows(
+                arm_model,
+                world,
+                world.test_ids,
+                assignments=fresh,
+                specs=training_specs(),
+                seed=seed + 17,
+            )
+            results[arm] = {
+                "functional": evaluate_functional(arm_model, world, seed),
+                "prospective_test": reporting_metrics(train_rows, test_rows, config.n_relations),
+                "prospective_heldout": reporting_metrics(
+                    train_rows, heldout_rows, config.n_relations
+                ),
+                "prospective_fresh": reporting_metrics(train_rows, fresh_rows, config.n_relations),
+            }
+        per_seed[f"seed_{seed}"] = results
+    return {
+        "config": config.as_dict(),
+        "per_seed": per_seed,
+        "aggregate": _aggregate(per_seed),
+    }
 
 
 def _mean(values: list[float]) -> float:

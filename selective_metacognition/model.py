@@ -67,7 +67,7 @@ class Selector(nn.Module):
         self.ln_final = nn.LayerNorm(config.d_model)
         self.answer_head = nn.Linear(config.d_model, config.n_answers, bias=False)
         modules: list[nn.Module] = [
-            nn.Linear(config.d_model, config.d_report),
+            nn.Linear(config.d_model + config.report_context_dim, config.d_report),
             nn.GELU(),
         ]
         for _ in range(config.report_layers - 1):
@@ -91,18 +91,39 @@ class Selector(nn.Module):
         temperature = self.config.temperature if temperature is None else temperature
         return torch.softmax(self.answer_logits(memory, relation_ids) / temperature, dim=-1)
 
-    def report_distribution(self, memory: torch.Tensor, relation_ids: torch.Tensor) -> torch.Tensor:
-        return self.report_distribution_from_hidden(self.hidden(memory, relation_ids))
+    def report_distribution(
+        self,
+        memory: torch.Tensor,
+        relation_ids: torch.Tensor,
+        context: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        return self.report_distribution_from_hidden(self.hidden(memory, relation_ids), context)
 
-    def report_distribution_from_hidden(self, hidden: torch.Tensor) -> torch.Tensor:
+    def report_distribution_from_hidden(
+        self, hidden: torch.Tensor, context: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        if self.config.report_context_dim:
+            if context is None:
+                context = torch.zeros(
+                    hidden.shape[0],
+                    self.config.report_context_dim,
+                    device=hidden.device,
+                    dtype=hidden.dtype,
+                )
+            hidden = torch.cat([hidden, context.to(hidden.dtype)], dim=-1)
         return torch.softmax(self.report_head(hidden), dim=-1)
 
     @torch.no_grad()
-    def expected_report(self, memory: torch.Tensor, relation_ids: torch.Tensor) -> torch.Tensor:
+    def expected_report(
+        self,
+        memory: torch.Tensor,
+        relation_ids: torch.Tensor,
+        context: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         grid = torch.tensor(
             self.config.confidence_grid, dtype=memory.dtype, device=memory.device
         )
-        return self.report_distribution(memory, relation_ids) @ grid
+        return self.report_distribution(memory, relation_ids, context) @ grid
 
 
 def set_requires_grad(model: nn.Module, substrings: tuple[str, ...] | list[str]) -> None:

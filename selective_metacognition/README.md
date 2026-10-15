@@ -248,12 +248,42 @@ unbiased squared-probability-error estimate of proposal section 11.2, and
 same-question condition tracking (sign agreement and correlation between
 success changes and report changes).
 
+## E3: prospective reporting
+
+The reporter sees the **clean** state and a description of an intervention
+(type and strength) that will be applied *after* the report.  It predicts
+success under the post-intervention policy.  The ordinary baseline receives the
+clean output-probability features (max probability, entropy, top-2 margin) and
+the **same intervention description**, but not the reporter.  Neither predictor
+sees the post-intervention state.
+
+This makes the incremental endpoint meaningful where E2's could not be: in E2
+the baseline saw the post-intervention probabilities, which determine success
+by construction.  Here the baseline must extrapolate from the clean state.
+Training covers `target_weaken` and `irrelevant_weaken` strengths
+`{0.2, 0.5, 0.8}` and `irrelevant_swap` scales `{1, 2}`; evaluation also
+includes held-out strengths `{0.35, 0.65}` and swap scale `{3}`.
+
+Local preview (1 seed, reduced reporting budget, arms A/B/C/E):
+
+| Arm | clean success | report | recalibrated | baseline | incremental | held-out incr. | sq. prob. error | constant |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A | 0.432 | 0.249 | — | 0.178 | +0.00012 | +0.00006 | 0.131 | 0.219 |
+| B | 0.453 | 0.250 | — | 0.180 | −0.00009 | −0.00003 | 0.131 | 0.227 |
+| C | 0.440 | 0.241 | — | 0.179 | +0.00026 | +0.00012 | 0.114 | 0.224 |
+| E | 0.451 | 0.241 | — | 0.179 | −0.00004 | −0.00003 | 0.117 | 0.226 |
+
+The prospective baseline is weaker than in E2 (0.178 versus 0.135), so there is
+more room, and C's report again has the lowest squared probability error.  But
+the incremental value is still negligible in this single-seed preview.  A
+5-seed cluster run is needed before drawing conclusions.
+
 ## Status
 
 Implemented and tested: world semantics (including `irrelevant_swap_all` and
 `swap_scale`), adapters and gradient scopes, warm start with per-step binding
-resampling, arms A-E, the rollout-store reporting trainer, E1/E2 runners, CLI
-flags for the informative regime, and Slurm jobs.
+resampling, arms A-E, the rollout-store reporting trainer, E1/E2/E3 runners,
+CLI flags for the informative regime, and Slurm jobs.
 
 E1 is confirmed on the cluster (5 seeds): C improves greedy accuracy over B on
 fresh bindings, but E (matched supervision) matches C in E2, so the gain
@@ -267,7 +297,5 @@ separately.
 
 Current verdict: C improves greedy accuracy and reduces the reporter's squared
 probability error, but does not demonstrate incremental reporting value under
-the current comparison. The reason remains unresolved. The next step, if
-pursued, is a prospective extension: predict success after a specified change,
-with both predictors receiving the same intervention description and neither
-seeing the post-intervention state.
+the current comparison. The reason remains unresolved. E3 (prospective
+reporting) is implemented and needs a 5-seed cluster run.

@@ -127,6 +127,52 @@ def test_functional_table_and_report_rows_shapes():
     assert len(rows) == expected_rows
 
 
+def test_prospective_specs_and_context():
+    from selective_metacognition.prospective import (
+        ProspectiveSpec,
+        heldout_specs,
+        intervention_context,
+        training_specs,
+    )
+
+    assert len(training_specs()) == 3 + 3 + 2
+    assert len(heldout_specs()) == 2 + 2 + 1
+
+    context = intervention_context(ProspectiveSpec("target_weaken", 0.5), torch.device("cpu"))
+    assert context.shape[0] == 4
+    assert context[0].item() == 1.0
+    assert context[-1].item() == 0.5
+
+    swap_context = intervention_context(ProspectiveSpec("irrelevant_swap", 3.0), torch.device("cpu"))
+    assert swap_context[-1].item() == 1.0
+
+
+def test_report_context_changes_distribution():
+    config = tiny_config(report_context_dim=4)
+    model = Selector(config)
+    memory = torch.randn(5, config.memory_dim)
+    relations = torch.zeros(5, dtype=torch.long)
+    no_context = model.report_distribution(memory, relations)
+    context = torch.zeros(5, 4)
+    context[:, 0] = 1.0
+    context[:, -1] = 0.5
+    with_context = model.report_distribution(memory, relations, context)
+    assert not torch.allclose(no_context, with_context)
+
+
+def test_e3_smoke_runs():
+    from selective_metacognition.runner import run_e3
+
+    config = tiny_config(report_context_dim=4, report_steps=15, report_collect_steps=6)
+    report = run_e3(config, seeds=1, device="cpu")
+    assert "aggregate" in report
+    for arm in ("A", "B", "C", "E"):
+        block = report["aggregate"][arm]
+        assert "prospective_test" in block
+        assert "incremental_brier" in block["prospective_test"]
+        assert "incremental_brier" in block["prospective_heldout"]
+
+
 def test_incremental_brier_is_positive_for_informative_report():
     rng = np.random.default_rng(0)
 
