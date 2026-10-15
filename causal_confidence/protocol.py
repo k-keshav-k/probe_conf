@@ -130,7 +130,13 @@ class SamplingPolicy:
 
 @dataclass(frozen=True)
 class InterventionConfig:
-    """Bounded discovery search and condition construction (plan section 7)."""
+    """Bounded discovery search and condition construction (plan section 7).
+
+    The screening pool is 100 questions and 8 draws per condition, matching the
+    plan's discovery budget: 1 clean + 6 candidates + 2 refinements + 2 rescue
+    options gives 11 x 100 x 8 = 8,800 short answer draws, below the ~10,000
+    cap.  A smaller pilot can override the pool size; a larger one raises.
+    """
 
     site_fractions: tuple[float, ...] = (1 / 3, 1 / 2, 2 / 3)
     group_sizes: tuple[int, ...] = (16, 64)
@@ -139,7 +145,7 @@ class InterventionConfig:
     max_initial_candidates: int = 6
     max_refined_candidates: int = 2
     random_replicates: int = 5
-    screening_questions: int = 50
+    screening_questions: int = 100
     screening_draws: int = 8
     max_screening_draws: int = 10_000
     restoration_fraction_gate: float = 0.5

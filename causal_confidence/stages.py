@@ -576,6 +576,16 @@ def run_p2_discovery(
         relation_counts[question.relation] += 1
 
     screen_questions = questions[: config.screening_questions]
+    projected_draws = (
+        len(screen_questions)
+        * draws
+        * (1 + len(candidates) + len(config.refinement_attenuations) + 2)
+    )
+    if projected_draws > config.max_screening_draws:
+        raise ValueError(
+            f"projected discovery draws {projected_draws} exceed the prespecified "
+            f"bound {config.max_screening_draws}; reduce screening_questions or draws"
+        )
     clean_banks = {
         question.question_id: bank_with_hooks(
             env,
@@ -798,6 +808,8 @@ def run_p2_discovery(
             * draws
             * (1 + len(candidates) + len(refinements) + len(rescue_options))
         ),
+        "projected_draws": int(projected_draws),
+        "max_screening_draws": int(config.max_screening_draws),
     }
 
 
