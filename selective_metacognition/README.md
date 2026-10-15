@@ -190,33 +190,40 @@ which the reporter never sees.  The corrected evaluation separates:
   baselines;
 - observable-reliability conditions versus the coherent false memory.
 
-Corrected preview (1 seed, reduced reporting budget):
+Corrected result (cluster, 5 seeds, observable conditions, test):
 
-| Arm | greedy | sampled | report | constant 0.5 | recalibrated | ordinary increment | privileged increment | sq. prob. error |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| A | 0.629 | 0.432 | 0.295 | 0.250 | 0.233 | +0.00007 | −0.00000 | 0.163 |
-| B | 0.637 | 0.453 | 0.300 | 0.250 | 0.236 | +0.00011 | +0.00001 | 0.170 |
-| C | 0.660 | 0.440 | 0.288 | 0.250 | 0.234 | +0.00025 | −0.00002 | 0.149 |
-| D | 0.656 | 0.439 | 0.288 | 0.250 | 0.234 | +0.00021 | −0.00002 | 0.148 |
-| E | 0.652 | 0.451 | 0.300 | 0.250 | 0.236 | +0.00014 | +0.00000 | 0.163 |
+| Arm | greedy | sampled | report | const 0.5 | const rate | recalibrated | ordinary incr. | privileged incr. | sq. prob. error | sign |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A | 0.588 | 0.408 | 0.267 | 0.250 | 0.231 | 0.225 | +0.00049 | +0.00004 | 0.139 | 0.596 |
+| B | 0.617 | 0.439 | 0.276 | 0.250 | 0.238 | 0.230 | +0.00033 | +0.00001 | 0.147 | 0.600 |
+| C | 0.641 | 0.421 | 0.268 | 0.250 | 0.234 | 0.227 | +0.00038 | −0.00002 | 0.128 | 0.599 |
+| D | 0.638 | 0.419 | 0.269 | 0.250 | 0.233 | 0.227 | +0.00034 | +0.00001 | 0.128 | 0.598 |
+| E | 0.640 | 0.438 | 0.275 | 0.250 | 0.237 | 0.230 | +0.00049 | +0.00004 | 0.139 | 0.599 |
 
 Corrected reading:
 
-- **Greedy and sampled success differ.** C improves greedy top-1 over B but its
-  sampled success probability is slightly lower. C and E have nearly identical
-  greedy accuracy, so the accuracy benefit specifically from the consistency
-  term is not established.
-- **The reporter is weak.** Its raw Brier (0.29–0.30) is worse than an
-  always-0.5 predictor (0.250). Recalibrating the report improves it to
-  0.233–0.236, so its ranking carries some information but its scale is off.
-- **Removing privileged information matters.** Against the ordinary baseline
-  the increment is small but positive (up to +0.00025 for C); against the
-  privileged baseline it is ~0.
-- **C and D reduce the squared probability error** relative to B and E
-  (0.148–0.149 versus 0.163–0.170). This is a descriptive finding about
-  predicting the true success probability, not a calibration-only metric.
-- **False memories are evaluated separately** and are not part of the main
-  observable-reliability endpoint.
+- **Greedy and sampled success diverge.** C improves greedy top-1 over B
+  (+0.024) but has lower sampled success (−0.018), and C matches E on both
+  (0.641 vs 0.640 greedy). The accuracy benefit specifically from the
+  consistency term is not established.
+- **The reporter is weak.** Raw Brier (0.267–0.276) is worse than an always-0.5
+  predictor (0.250) and around the train-rate constant (0.231–0.238).
+  Recalibration improves it to 0.225–0.230, only slightly better than the
+  constant-rate baseline, so its ranking carries a little information but its
+  scale is off.
+- **Incremental value is negligible.** Against the ordinary baseline the
+  increment is +0.0003 to +0.0005 for every arm; C − B is +0.00004 (4/5 seeds)
+  and C − E is −0.00012 (2/5). The privileged baseline gives ~0.
+- **C and D predict the true success probability better.** Squared probability
+  error: C/D 0.128 versus B 0.147 and E 0.139; C − B −0.019 (5/5 seeds) and
+  C − E −0.011 (5/5). This is a descriptive finding, not a calibration-only
+  metric, and it is the one consistent effect of the consistency objective.
+- **Within-question tracking is condition-dependent.** For target weakening,
+  sign agreement 0.70 (delta p +0.377, delta c +0.105); for irrelevant
+  weakening 0.58; for irrelevant swap 0.52 (effect size ~0.015).
+- **Coherent false memories remain confident.** The report predicts ~0.19–0.20
+  success while actual success is ~0.007. All arms show this; the boundary is
+  reported separately and is not part of the main endpoint.
 
 Defensible verdict: **C improves greedy accuracy over B and reduces the
 reporter's squared probability error, but does not demonstrate incremental
