@@ -45,6 +45,7 @@ from causal_confidence.data import (
     load_cohort,
     load_manifest,
     load_popqa,
+    per_item_leakage_scan,
     write_manifest,
 )
 from causal_confidence.episodes import (
@@ -55,6 +56,7 @@ from causal_confidence.episodes import (
     duplicate_run_tolerance,
     frozen_parameter_check,
     generate_answer,
+    hook_effect_on_continuation,
     last_layer_cache_miss,
     run_prefix,
 )
@@ -262,6 +264,39 @@ class EpisodeContracts(unittest.TestCase):
             channels=tuple(range(4)),
         )
         self.assertFalse(result["cache_reaches"])
+
+    def test_middle_layer_hook_reaches_continuation(self):
+        all_channels = tuple(range(self.model.config.intermediate_size))
+        group = iv.ChannelGroup(layer=1, channels=all_channels)
+        result = hook_effect_on_continuation(
+            self.model,
+            self.ids,
+            self.suffix,
+            hook_specs=[(group, "attenuate", 1.0)],
+            positions=self.positions,
+        )
+        # The tiny model is deterministic on CPU: any nonzero effect proves
+        # propagation, and a last-layer hook leaves the continuation exactly
+        # unchanged.
+        tolerance = duplicate_run_tolerance(self.model, self.ids)["tolerance"]
+        self.assertGreater(result["effect"], tolerance)
+        last = hook_effect_on_continuation(
+            self.model,
+            self.ids,
+            self.suffix,
+            hook_specs=[
+                (
+                    iv.ChannelGroup(
+                        layer=self.model.config.num_hidden_layers - 1,
+                        channels=all_channels,
+                    ),
+                    "attenuate",
+                    1.0,
+                )
+            ],
+            positions=self.positions,
+        )
+        self.assertEqual(last["effect"], 0.0)
 
     def test_prefix_isolation(self):
         prefix = run_prefix(self.model, self.ids)
@@ -485,6 +520,22 @@ class DataContracts(unittest.TestCase):
         dirty = leakage_scan(["the answer is Charles"], ["Charles"])
         self.assertFalse(dirty["clean"])
         self.assertEqual(dirty["hits"][0]["needle"], "Charles")
+
+    def test_per_item_leakage_scan_avoids_cross_question_false_positives(self):
+        items = [
+            ("Who is the father of Albert?", ["Albert's father", "clean"]),
+            ("In what city was Albert born?", ["Bern"]),
+        ]
+        # "Bern" does not appear in item 1 and "Albert" is item 1's own subject
+        # text, not a gold answer for it; per-item scanning must stay clean.
+        result = per_item_leakage_scan(items)
+        self.assertTrue(result["clean"])
+        leaked = per_item_leakage_scan(
+            [("Who is the father of X? The answer is Charles.", ["Charles"])]
+        )
+        self.assertFalse(leaked["clean"])
+        # Short needles are skipped to avoid accidental substring hits.
+        self.assertTrue(per_item_leakage_scan([("city of Ur", ["Ur"])])["clean"])
 
     def test_cohort_loader_without_question_id(self):
         """The real cohort schema may lack ``question_id``; the fallback must work."""

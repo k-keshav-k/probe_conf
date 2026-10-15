@@ -462,3 +462,29 @@ def leakage_scan(texts: list[str], forbidden: list[str]) -> dict:
             if needle_lower and needle_lower in text:
                 hits.append({"index": index, "needle": needle})
     return {"n_texts": len(texts), "n_forbidden": len(forbidden), "hits": hits, "clean": not hits}
+
+
+def per_item_leakage_scan(items: list[tuple[str, list[str]]]) -> dict:
+    """Scan each text against only its own forbidden strings.
+
+    The global scan flags a gold answer of one question inside another
+    question's subject name; that is a false positive.  This variant checks
+    whether a text leaks *its own* gold answers or condition names.  Strings
+    shorter than three characters are skipped to avoid accidental substring
+    hits inside ordinary words.
+    """
+
+    hits = []
+    for index, (text, forbidden) in enumerate(items):
+        lowered = text.lower()
+        for needle in forbidden:
+            if len(str(needle)) < 3:
+                continue
+            if str(needle).lower() in lowered:
+                hits.append({"index": index, "needle": needle})
+    return {
+        "n_items": len(items),
+        "n_hits": len(hits),
+        "hits": hits,
+        "clean": not hits,
+    }

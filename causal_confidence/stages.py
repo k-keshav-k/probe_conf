@@ -11,6 +11,7 @@ and never overwrite an existing frozen artifact.
 from __future__ import annotations
 
 import json
+import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,7 +20,7 @@ import numpy as np
 import torch
 
 from . import interventions as iv
-from .data import Question, audit_references, leakage_scan
+from .data import Question, audit_references, per_item_leakage_scan
 from .episodes import (
     adapters_enabled,
     answer_suffix_ids,
@@ -30,6 +31,7 @@ from .episodes import (
     continue_teacher_forced,
     duplicate_run_tolerance,
     generate_answer,
+    hook_effect_on_continuation,
     last_layer_cache_miss,
     report_suffix_ids,
     run_prefix,
@@ -174,7 +176,8 @@ def run_p1(
     sites = iv.candidate_sites(env.n_layers)
     site = sites[len(sites) // 2]
     intermediate = int(model.config.intermediate_size)
-    probe_channels = tuple(range(min(16, intermediate)))
+    probe_channels = tuple(range(min(64, intermediate)))
+    probe_attenuation = 1.0
     probe_group = iv.ChannelGroup(layer=site, channels=probe_channels, label="contract_probe")
 
     tolerance = duplicate_run_tolerance(model, ids)
@@ -185,9 +188,22 @@ def run_p1(
         model,
         ids,
         answer_suffix,
-        hook_specs=[(probe_group, "attenuate", 0.5)],
+        hook_specs=[(probe_group, "attenuate", probe_attenuation)],
         positions=positions,
     )
+    # The middle-layer hook must additionally *change* the continuation; a
+    # last-layer hook does not (its effect never reaches the continuation
+    # cache).  Agreement between cached and full recomputation alone cannot
+    # distinguish the two.
+    propagation = hook_effect_on_continuation(
+        model,
+        ids,
+        answer_suffix,
+        hook_specs=[(probe_group, "attenuate", probe_attenuation)],
+        positions=positions,
+    )
+    propagation["tolerance"] = tolerance["tolerance"]
+    propagation["passed"] = propagation["effect"] > propagation["tolerance"]
     equivalence_tolerance = max(
         10.0 * floor["max_abs_diff"], 10.0 * tolerance["tolerance"], 1e-3
     )
@@ -198,6 +214,7 @@ def run_p1(
         layer_index=env.n_layers - 1,
         positions=positions,
         channels=probe_channels,
+        tolerance=10.0 * tolerance["tolerance"],
     )
 
     prefix = run_prefix(model, ids, prompt_hash_value=digest)
@@ -272,26 +289,23 @@ def run_p1(
         "max_abs_frequency_gap": float((empirical - expected).abs().max().item()),
     }
 
-    # Leakage audit: no gold reference and no condition name may appear in the
-    # reporter or answer prompts.  References shorter than three characters
-    # are skipped to avoid accidental substring hits inside ordinary words.
+    # Leakage audit: a prompt may not contain its own gold references or any
+    # condition name.  Cross-question scans produce false positives when one
+    # question's gold appears inside another subject's name, so each prompt is
+    # scanned against only its own forbidden strings.
     from .episodes import build_prefix_text
     from .protocol import ANSWER_SUFFIX, CONDITION_SLOTS, REPORT_SUFFIX
 
-    leakage_texts = [
-        build_prefix_text(question.question_text)
+    leakage_items = [
+        (
+            build_prefix_text(question.question_text),
+            list(question.references) + list(CONDITION_SLOTS),
+        )
         for question in questions
-    ] + [ANSWER_SUFFIX, REPORT_SUFFIX]
-    forbidden = sorted(
-        {
-            reference
-            for question in questions
-            for reference in question.references
-            if len(reference) >= 3
-        }
-        | set(CONDITION_SLOTS)
-    )
-    leakage = leakage_scan(leakage_texts, forbidden)
+    ]
+    leakage_items.append((ANSWER_SUFFIX, list(CONDITION_SLOTS)))
+    leakage_items.append((REPORT_SUFFIX, list(CONDITION_SLOTS)))
+    leakage = per_item_leakage_scan(leakage_items)
 
     contract = {
         "question_id": question.question_id,
@@ -301,6 +315,7 @@ def run_p1(
         "middle_layer_equivalence": middle,
         "equivalence_tolerance": equivalence_tolerance,
         "middle_layer_passed": middle["max_abs_diff"] <= equivalence_tolerance,
+        "middle_layer_propagation": propagation,
         "last_layer_diagnostic": last_layer,
         "prefix_isolation": isolation,
         "adapter_gating": gating,
@@ -309,17 +324,32 @@ def run_p1(
         "first_token_sampling": first_token,
         "leakage": leakage,
     }
-    contract["passed"] = bool(
-        contract["middle_layer_passed"]
-        and isolation["cache_unchanged"]
-        and isolation["branch_repeat_max_abs_diff"] == 0.0
-        and gating["answer_branch_stable"]
-        and gating["disabled_vs_disabled_max_abs_diff"] == 0.0
-        and reporter_step["answer_logits_max_abs_diff"] == 0.0
-        and reporter_step["base_parameters_unchanged"]
-        and gating_trained["enabled_vs_disabled_max_abs_diff"] > 0.0
-        and leakage["clean"]
-    )
+    duplicate_tolerance = tolerance["tolerance"]
+    checks = {
+        "middle_layer_equivalence": contract["middle_layer_passed"],
+        "middle_layer_propagation": propagation["passed"],
+        "last_layer_does_not_reach": not last_layer["cache_reaches"],
+        "prefix_isolation": bool(
+            isolation["cache_unchanged"]
+            and isolation["branch_repeat_max_abs_diff"] <= duplicate_tolerance
+        ),
+        "adapter_gating": bool(
+            gating["answer_branch_stable"]
+            and gating["disabled_vs_disabled_max_abs_diff"] <= duplicate_tolerance
+        ),
+        "adapter_gating_after_perturbation": bool(
+            gating_trained["enabled_vs_disabled_max_abs_diff"]
+            > duplicate_tolerance
+        ),
+        "reporter_step": bool(
+            reporter_step["answer_logits_max_abs_diff"] <= duplicate_tolerance
+            and reporter_step["base_parameters_unchanged"]
+        ),
+        "leakage": bool(leakage["clean"]),
+    }
+    contract["checks"] = checks
+    contract["failed_checks"] = [name for name, ok in checks.items() if not ok]
+    contract["passed"] = not contract["failed_checks"]
 
     # Answer-policy audit over the discovery questions.
     banks: list[OutcomeBank] = []
@@ -339,6 +369,44 @@ def run_p1(
     audit = audit_banks(bank_payloads)
     references = audit_references(questions)
     mean_success = float(np.mean([bank.success for bank in banks])) if banks else float("nan")
+
+    # Success by relation and by prior popularity tercile (a prior property,
+    # not an outcome-conditioned selection).  This reports the headroom the
+    # P2 damage gate will have to work with.
+    by_relation: dict[str, list[float]] = {}
+    for item, bank in zip(questions, banks):
+        by_relation.setdefault(item.relation, []).append(bank.success)
+    relation_summary = {
+        relation: {"n": len(values), "mean_success": float(np.mean(values))}
+        for relation, values in sorted(by_relation.items())
+    }
+    popularity_pairs = []
+    for item, bank in zip(questions, banks):
+        value = item.popularity
+        if value is None or (isinstance(value, float) and math.isnan(value)):
+            continue
+        popularity_pairs.append((float(value), bank.success))
+    popularity_summary = {
+        "n_known": len(popularity_pairs),
+        "n_missing": len(questions) - len(popularity_pairs),
+    }
+    if popularity_pairs:
+        values = np.array([value for value, _ in popularity_pairs])
+        successes = np.array([success for _, success in popularity_pairs])
+        order = np.argsort(values)
+        ranks = np.empty_like(order)
+        ranks[order] = np.arange(len(values))
+        terciles = ranks * 3 // len(values)
+        popularity_summary["quantiles"] = {
+            "0.25": float(np.quantile(values, 0.25)),
+            "0.50": float(np.quantile(values, 0.50)),
+            "0.75": float(np.quantile(values, 0.75)),
+        }
+        popularity_summary["success_by_tercile"] = {
+            name: float(successes[terciles == index].mean())
+            for index, name in enumerate(("tail", "mid", "head"))
+        }
+
     result = {
         "stage": "p1",
         "model": {"name": PROTOCOL.model_name, "revision": env.revision},
@@ -349,7 +417,9 @@ def run_p1(
             "references": references,
             "banks": audit,
             "mean_success": mean_success,
-            "not_at_floor": mean_success > 0.02,
+            "success_by_relation": relation_summary,
+            "popularity": popularity_summary,
+            "not_at_floor": mean_success > 0.05,
             "not_at_ceiling": mean_success < 0.98,
             "every_item_audited": all(bank.references for bank in banks),
         },

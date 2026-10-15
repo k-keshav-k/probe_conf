@@ -433,6 +433,43 @@ def cache_full_run_equivalence(
     }
 
 
+def hook_effect_on_continuation(
+    model,
+    input_ids: torch.Tensor,
+    suffix_ids: torch.Tensor,
+    *,
+    hook_specs,
+    positions,
+    attention_mask: torch.Tensor | None = None,
+) -> dict:
+    """Measure whether a prefix hook changes the continuation at all.
+
+    Compares a clean retained prefix against a hooked prefix, both continued
+    with the same suffix.  A middle-layer hook must change the continuation
+    (its effect propagates through the cached keys and values); a last-layer
+    hook cannot, because no later layer recomputes anything the continuation
+    reads (plan section 5).
+    """
+
+    clean_prefix = run_prefix(
+        model, input_ids, attention_mask=attention_mask, capture_hidden=False
+    )
+    with InterventionHooks(model, hook_specs, positions) as hooks:
+        hooked_prefix = run_prefix(
+            model,
+            input_ids,
+            attention_mask=attention_mask,
+            hooks=hooks,
+            capture_hidden=False,
+        )
+    clean_logits = continue_teacher_forced(model, clean_prefix, suffix_ids)
+    hooked_logits = continue_teacher_forced(model, hooked_prefix, suffix_ids)
+    return {
+        "effect": max_abs_diff(hooked_logits, clean_logits),
+        "n_suffix_tokens": int(suffix_ids.shape[1]),
+    }
+
+
 def last_layer_cache_miss(
     model,
     input_ids: torch.Tensor,
@@ -442,8 +479,13 @@ def last_layer_cache_miss(
     positions,
     attenuation: float = 0.5,
     channels: tuple[int, ...] | None = None,
+    tolerance: float = 1e-4,
 ) -> dict:
-    """Diagnostic: a last-layer hook cannot reach the continuation cache."""
+    """Diagnostic: a last-layer hook cannot reach the continuation cache.
+
+    The plan requires this as a visible engineering check; such sites are
+    excluded from the main study (plan section P1).
+    """
 
     from .interventions import ChannelGroup
 
@@ -451,7 +493,7 @@ def last_layer_cache_miss(
         intermediate = model.config.intermediate_size
         channels = tuple(range(min(16, intermediate)))
     group = ChannelGroup(layer=layer_index, channels=channels, label="last_layer_probe")
-    result = cache_full_run_equivalence(
+    result = hook_effect_on_continuation(
         model,
         input_ids,
         suffix_ids,
@@ -459,7 +501,8 @@ def last_layer_cache_miss(
         positions=positions,
     )
     result["layer_index"] = layer_index
-    result["cache_reaches"] = result["max_abs_diff"] > 1e-3
+    result["tolerance"] = max(float(tolerance), 1e-4)
+    result["cache_reaches"] = result["effect"] > result["tolerance"]
     return result
 
 

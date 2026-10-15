@@ -156,6 +156,7 @@ def check_episode_contract() -> dict:
     from .episodes import (
         check_prefix_immutability,
         duplicate_run_tolerance,
+        hook_effect_on_continuation,
         last_layer_cache_miss,
     )
 
@@ -163,7 +164,9 @@ def check_episode_contract() -> dict:
     ids = torch.tensor([[4, 5, 6, 7, 8, 9, 10, 11]])
     suffix = torch.tensor([[12, 13]])
     positions = [[ids.shape[1] - 1]]
-    group = iv.ChannelGroup(layer=1, channels=tuple(range(4)))
+    group = iv.ChannelGroup(
+        layer=1, channels=tuple(range(model.config.intermediate_size))
+    )
     tolerance = duplicate_run_tolerance(model, ids)
     floor = stages.cache_full_run_equivalence(
         model, ids, suffix, hook_specs=[], positions=[]
@@ -172,7 +175,14 @@ def check_episode_contract() -> dict:
         model,
         ids,
         suffix,
-        hook_specs=[(group, "attenuate", 0.5)],
+        hook_specs=[(group, "attenuate", 1.0)],
+        positions=positions,
+    )
+    propagation = hook_effect_on_continuation(
+        model,
+        ids,
+        suffix,
+        hook_specs=[(group, "attenuate", 1.0)],
         positions=positions,
     )
     last = last_layer_cache_miss(
@@ -182,6 +192,7 @@ def check_episode_contract() -> dict:
         layer_index=model.config.num_hidden_layers - 1,
         positions=positions,
         channels=tuple(range(4)),
+        tolerance=10.0 * tolerance["tolerance"],
     )
     prefix = run_prefix(model, ids)
     isolation = check_prefix_immutability(model, prefix, suffix)
@@ -190,10 +201,14 @@ def check_episode_contract() -> dict:
         "middle_gap": middle["max_abs_diff"],
         "equivalence_tolerance": tolerance_value,
         "middle_passed": middle["max_abs_diff"] <= tolerance_value,
-        "last_layer_gap": last["max_abs_diff"],
+        "middle_effect": propagation["effect"],
+        "middle_propagation_passed": propagation["effect"] > tolerance["tolerance"],
+        "middle_propagation_tolerance": tolerance["tolerance"],
+        "last_layer_effect": last["effect"],
         "last_layer_misses_cache": not last["cache_reaches"],
         "isolation": isolation,
         "passed": middle["max_abs_diff"] <= tolerance_value
+        and propagation["effect"] > tolerance["tolerance"]
         and not last["cache_reaches"]
         and isolation["cache_unchanged"],
     }

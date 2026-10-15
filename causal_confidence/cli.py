@@ -187,7 +187,9 @@ def command_p1(args) -> int:
         json.dumps(
             {
                 "contract_passed": result["contract"]["passed"],
+                "failed_checks": result["contract"].get("failed_checks", []),
                 "mean_success": result["answer_policy"]["mean_success"],
+                "not_at_floor": result["answer_policy"]["not_at_floor"],
                 "n_questions": result["n_questions"],
             },
             indent=2,
