@@ -130,6 +130,8 @@ def collect_report_rows(
         policy = model.policy(memory, relations)
         p_correct = policy.gather(1, correct[:, None]).squeeze(1)
         report = model.expected_report(memory, relations)
+        top2 = policy.topk(2, dim=1).values
+        margin = top2[:, 0] - top2[:, 1]
         answers = torch.multinomial(
             policy.detach().cpu(), outcomes, replacement=True, generator=generator
         ).to(correct.device)
@@ -147,23 +149,32 @@ def collect_report_rows(
                         -(policy[row_index] * (policy[row_index] + EPS).log()).sum()
                     ),
                     "max_prob": float(policy[row_index].max()),
+                    "margin": float(margin[row_index]),
                 }
             )
     return rows
 
 
-def _features(rows: list[dict], n_relations: int) -> np.ndarray:
+def _features(rows: list[dict], n_relations: int, include_condition: bool = False) -> np.ndarray:
+    """Metadata and prospective output-probability features.
+
+    ``include_condition`` adds the intervention identity.  The ordinary
+    baseline must not receive it: the reporter never sees the condition, and
+    ``target_swap_valid`` and ``false_memory`` can produce identical inputs
+    with different ground truths.  The privileged version is reported
+    separately.
+    """
+
     features = []
     for row in rows:
         relation = np.zeros(n_relations)
         relation[row["relation"]] = 1.0
-        condition = np.zeros(len(REPORT_CONDITIONS))
-        condition[REPORT_CONDITIONS.index(row["condition"])] = 1.0
-        features.append(
-            np.concatenate(
-                [relation, condition, [row["max_prob"], row["entropy"]]]
-            )
-        )
+        parts = [relation, [row["max_prob"], row["entropy"], row["margin"]]]
+        if include_condition:
+            condition = np.zeros(len(REPORT_CONDITIONS))
+            condition[REPORT_CONDITIONS.index(row["condition"])] = 1.0
+            parts.append(condition)
+        features.append(np.concatenate(parts))
     return np.asarray(features, dtype=np.float64)
 
 
@@ -190,29 +201,49 @@ def reporting_metrics(
     test_rows: list[dict],
     n_relations: int,
 ) -> dict:
-    """Brier endpoints with a metadata plus output-probability baseline."""
+    """Brier endpoints with ordinary, privileged, constant, and recalibrated predictors.
+
+    The ordinary baseline receives metadata and prospective output-probability
+    features (max probability, entropy, top-2 margin) but **not** the
+    intervention identity.  The privileged baseline additionally receives the
+    condition one-hot; it is reported separately because the reporter never
+    sees that label.  ``brier_report_recalibrated`` refits the report alone, to
+    test whether its ranking carries information even if its scale does not.
+    """
 
     from sklearn.linear_model import LogisticRegression
 
-    train_x = _features(train_rows, n_relations)
     train_outcomes = _outcome_matrix(train_rows)
+    repeats = train_outcomes.shape[1]
     train_y = train_outcomes.reshape(-1)
-    train_x = np.repeat(train_x, train_outcomes.shape[1], axis=0)
-    train_report = np.repeat(
-        np.asarray([row["report"] for row in train_rows])[:, None], train_outcomes.shape[1], axis=0
-    )
-    test_x = _features(test_rows, n_relations)
     test_y = _outcome_matrix(test_rows)
+
+    def expand(features: np.ndarray) -> np.ndarray:
+        return np.repeat(features, repeats, axis=0)
+
+    ordinary_x = expand(_features(train_rows, n_relations, include_condition=False))
+    privileged_x = expand(_features(train_rows, n_relations, include_condition=True))
+    test_ordinary = _features(test_rows, n_relations, include_condition=False)
+    test_privileged = _features(test_rows, n_relations, include_condition=True)
+    train_report = np.repeat(
+        np.asarray([row["report"] for row in train_rows])[:, None], repeats, axis=0
+    )
     report = np.asarray([row["report"] for row in test_rows])[:, None]
     p_correct = np.asarray([row["p_correct"] for row in test_rows])[:, None]
 
-    baseline = LogisticRegression(max_iter=2000, C=1.0)
-    baseline.fit(train_x, train_y)
-    baseline_prob = baseline.predict_proba(test_x)[:, 1][:, None]
+    def fit_predict(x_train: np.ndarray, y_train: np.ndarray, x_test: np.ndarray) -> np.ndarray:
+        model = LogisticRegression(max_iter=2000, C=1.0).fit(x_train, y_train)
+        return model.predict_proba(x_test)[:, 1][:, None]
 
-    augmented = LogisticRegression(max_iter=2000, C=1.0)
-    augmented.fit(np.hstack([train_x, train_report]), train_y)
-    augmented_prob = augmented.predict_proba(np.hstack([test_x, report]))[:, 1][:, None]
+    ordinary = fit_predict(ordinary_x, train_y, test_ordinary)
+    ordinary_augmented = fit_predict(
+        np.hstack([ordinary_x, train_report]), train_y, np.hstack([test_ordinary, report])
+    )
+    privileged = fit_predict(privileged_x, train_y, test_privileged)
+    privileged_augmented = fit_predict(
+        np.hstack([privileged_x, train_report]), train_y, np.hstack([test_privileged, report])
+    )
+    recalibrated = fit_predict(train_report, train_y, report)
 
     estimates = np.asarray(
         [
@@ -220,17 +251,22 @@ def reporting_metrics(
             for row in test_rows
         ]
     )
-
-    same_question = _same_question_tracking(test_rows)
+    report_flat = np.asarray([row["report"] for row in test_rows])
 
     return {
-        "brier_report": _brier(np.asarray([row["report"] for row in test_rows]), test_y),
-        "brier_baseline": _brier(baseline_prob, test_y),
-        "brier_augmented": _brier(augmented_prob, test_y),
-        "incremental_brier": _brier(baseline_prob, test_y) - _brier(augmented_prob, test_y),
+        "brier_report": _brier(report_flat, test_y),
+        "brier_report_recalibrated": _brier(recalibrated, test_y),
+        "brier_constant_half": _brier(np.full(len(test_rows), 0.5), test_y),
+        "brier_constant_rate": _brier(np.full(len(test_rows), float(train_y.mean())), test_y),
         "brier_policy": _brier(p_correct, test_y),
-        "squared_error_estimate": float(np.mean(estimates)),
-        "same_question": same_question,
+        "brier_ordinary_baseline": _brier(ordinary, test_y),
+        "brier_ordinary_augmented": _brier(ordinary_augmented, test_y),
+        "incremental_brier": _brier(ordinary, test_y) - _brier(ordinary_augmented, test_y),
+        "brier_privileged_baseline": _brier(privileged, test_y),
+        "brier_privileged_augmented": _brier(privileged_augmented, test_y),
+        "incremental_privileged": _brier(privileged, test_y) - _brier(privileged_augmented, test_y),
+        "squared_probability_error": float(np.mean(estimates)),
+        "same_question": _same_question_tracking(test_rows),
     }
 
 
@@ -246,28 +282,50 @@ def _squared_error_estimate(report: float, outcomes: np.ndarray) -> float:
 
 
 def _same_question_tracking(test_rows: list[dict]) -> dict:
+    """Within-item report changes versus success changes, by condition pair."""
+
     lookup: dict[tuple[int, int, str], dict] = {}
     for row in test_rows:
         lookup[(row["subject_id"], row["relation"], row["condition"])] = row
-    pairs = []
-    for (subject, relation, condition), clean_row in lookup.items():
-        if condition != "clean":
-            continue
-        for other in ("target_weaken", "irrelevant_weaken", "irrelevant_swap"):
-            other_row = lookup.get((subject, relation, other))
-            if other_row is not None:
-                pairs.append(
-                    (
-                        clean_row["p_correct"] - other_row["p_correct"],
-                        clean_row["report"] - other_row["report"],
-                    )
+
+    result: dict = {"n": 0}
+    all_pairs: list[tuple[float, float]] = []
+    for condition in ("target_weaken", "irrelevant_weaken", "irrelevant_swap"):
+        pairs: list[tuple[float, float]] = []
+        for (subject, relation, name), clean_row in lookup.items():
+            if name != "clean":
+                continue
+            other_row = lookup.get((subject, relation, condition))
+            if other_row is None:
+                continue
+            pairs.append(
+                (
+                    clean_row["p_correct"] - other_row["p_correct"],
+                    clean_row["report"] - other_row["report"],
                 )
+            )
+        result[condition] = _pair_stats(pairs)
+        all_pairs.extend(pairs)
+
+    overall = _pair_stats(all_pairs)
+    result["n"] = overall.get("n", 0)
+    for key in ("mean_delta_p", "mean_delta_c", "sign_agreement", "correlation"):
+        if key in overall:
+            result[key] = overall[key]
+    return result
+
+
+def _pair_stats(pairs: list[tuple[float, float]]) -> dict:
     if not pairs:
         return {"n": 0}
     delta_p = np.asarray([pair[0] for pair in pairs])
     delta_c = np.asarray([pair[1] for pair in pairs])
     sign_agreement = float(np.mean(np.sign(delta_p) == np.sign(delta_c)))
-    correlation = float(np.corrcoef(delta_p, delta_c)[0, 1]) if np.std(delta_p) > 0 and np.std(delta_c) > 0 else float("nan")
+    correlation = (
+        float(np.corrcoef(delta_p, delta_c)[0, 1])
+        if np.std(delta_p) > 0 and np.std(delta_c) > 0
+        else float("nan")
+    )
     return {
         "n": len(pairs),
         "mean_delta_p": float(delta_p.mean()),

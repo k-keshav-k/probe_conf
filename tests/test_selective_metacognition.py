@@ -145,6 +145,7 @@ def test_incremental_brier_is_positive_for_informative_report():
                     "outcomes": outcomes,
                     "entropy": 1.0 + 0.1 * float(rng.normal()),
                     "max_prob": 0.5 + 0.1 * float(rng.normal()),
+                    "margin": 0.1 + 0.05 * float(rng.normal()),
                 }
             )
         return rows
@@ -166,6 +167,7 @@ def test_reporting_metrics_smoke():
                 "outcomes": [1.0, 0.0, 1.0, 1.0],
                 "entropy": 1.0,
                 "max_prob": 0.5,
+                "margin": 0.1,
             }
         )
     metrics = reporting_metrics(rows, rows, 4)

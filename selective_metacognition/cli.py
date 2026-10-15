@@ -52,8 +52,8 @@ def _build_config(args) -> ToyConfig:
 
 def _print_e1(report: dict) -> None:
     header = (
-        f"{'arm':>10} {'split':>6} {'clean_top1':>10} {'irr_stab':>8} "
-        f"{'tgt_loss':>8} {'irr_loss':>8} {'select':>7} {'swap_top1':>9} {'top1_share':>10}"
+        f"{'arm':>10} {'split':>6} {'greedy':>7} {'sampled':>8} {'irr_stab':>8} "
+        f"{'tgt_loss':>8} {'irr_loss':>8} {'select':>7} {'swap':>7} {'top1_share':>10}"
     )
     print(header)
     print("-" * len(header))
@@ -64,17 +64,17 @@ def _print_e1(report: dict) -> None:
             target_loss = clean - metrics["target_weaken"]["success_prob"]
             irr_loss = clean - metrics["irrelevant_weaken"]["success_prob"]
             print(
-                f"{arm:>10} {split:>6} {metrics['clean']['top1']:>10.3f} "
+                f"{arm:>10} {split:>6} {metrics['clean']['top1']:>7.3f} {clean:>8.3f} "
                 f"{metrics['irrelevant_swap_stability']:>8.3f} {target_loss:>8.3f} "
                 f"{irr_loss:>8.3f} {metrics['selectivity']:>7.3f} "
-                f"{metrics['target_swap_valid']['top1']:>9.3f} {metrics['top1_share']:>10.3f}"
+                f"{metrics['target_swap_valid']['top1']:>7.3f} {metrics['top1_share']:>10.3f}"
             )
 
 
 def _print_e2(report: dict) -> None:
     header = (
-        f"{'arm':>4} {'clean_top1':>10} {'select':>7} {'brier_rep':>9} "
-        f"{'brier_base':>10} {'increm':>7} {'sq_err':>7} {'sign_agr':>8}"
+        f"{'arm':>4} {'greedy':>7} {'sampled':>8} {'report':>8} {'const':>7} {'recal':>7} "
+        f"{'ordinary':>10} {'privileged':>11} {'sq_prob':>8} {'sign':>6}"
     )
     print(header)
     print("-" * len(header))
@@ -83,10 +83,12 @@ def _print_e2(report: dict) -> None:
         functional = metrics["functional"]["test"]
         reporting = metrics["reporting_test"]
         print(
-            f"{arm:>4} {functional['clean']['top1']:>10.3f} {functional['selectivity']:>7.3f} "
-            f"{reporting['brier_report']:>9.4f} {reporting['brier_baseline']:>10.4f} "
-            f"{reporting['incremental_brier']:>7.4f} {reporting['squared_error_estimate']:>7.4f} "
-            f"{reporting['same_question']['sign_agreement']:>8.3f}"
+            f"{arm:>4} {functional['clean']['top1']:>7.3f} {functional['clean']['success_prob']:>8.3f} "
+            f"{reporting['brier_report']:>8.4f} {reporting['brier_constant_half']:>7.4f} "
+            f"{reporting['brier_report_recalibrated']:>7.4f} "
+            f"{reporting['incremental_brier']:>+10.5f} {reporting['incremental_privileged']:>+11.5f} "
+            f"{reporting['squared_probability_error']:>8.4f} "
+            f"{reporting['same_question']['sign_agreement']:>6.3f}"
         )
 
 

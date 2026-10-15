@@ -6,7 +6,11 @@ import copy
 
 import torch
 
-from .config import ToyConfig
+from .config import (
+    FALSE_MEMORY_CONDITIONS,
+    OBSERVABLE_CONDITIONS,
+    ToyConfig,
+)
 from .evaluation import (
     collect_report_rows,
     functional_table,
@@ -102,10 +106,28 @@ def run_e2(config: ToyConfig, seeds: int | None = None, device: torch.device | s
             fresh_rows = collect_report_rows(
                 arm_model, world, world.test_ids, assignments=fresh, seed=seed + 11
             )
+
+            def _filter(rows, conditions):
+                return [row for row in rows if row["condition"] in conditions]
+
             results[arm] = {
                 "functional": functional,
-                "reporting_test": reporting_metrics(train_rows, test_rows, config.n_relations),
-                "reporting_fresh": reporting_metrics(train_rows, fresh_rows, config.n_relations),
+                "reporting_test": reporting_metrics(
+                    _filter(train_rows, OBSERVABLE_CONDITIONS),
+                    _filter(test_rows, OBSERVABLE_CONDITIONS),
+                    config.n_relations,
+                ),
+                "reporting_false_memory": reporting_metrics(
+                    _filter(train_rows, FALSE_MEMORY_CONDITIONS),
+                    _filter(test_rows, FALSE_MEMORY_CONDITIONS),
+                    config.n_relations,
+                ),
+                "reporting_all": reporting_metrics(train_rows, test_rows, config.n_relations),
+                "reporting_fresh": reporting_metrics(
+                    _filter(train_rows, OBSERVABLE_CONDITIONS),
+                    _filter(fresh_rows, OBSERVABLE_CONDITIONS),
+                    config.n_relations,
+                ),
             }
         per_seed[f"seed_{seed}"] = results
     return {

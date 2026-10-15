@@ -180,26 +180,52 @@ store). Three implementation choices mattered:
   baseline and augmented scores. Fixed; an informative synthetic report now
   yields a positive incremental Brier.
 
-E2 outcome (cluster, 5 seeds, with the fixed reporting stack):
+E2 outcome (cluster, 5 seeds, with the fixed reporting stack).  The original
+table used a **privileged baseline** that received the intervention identity,
+which the reporter never sees.  The corrected evaluation separates:
 
-| Arm | clean top-1 | report Brier | baseline Brier | incremental Brier | sq_err |
-| --- | --- | --- | --- | --- | --- |
-| A | 0.588 | 0.255 | 0.136 | +0.00000 | 0.147 |
-| B | 0.617 | 0.261 | 0.134 | +0.00003 | 0.153 |
-| C | 0.641 | 0.255 | 0.137 | +0.00000 | 0.137 |
-| D | 0.638 | 0.259 | 0.137 | +0.00000 | 0.142 |
-| E | 0.640 | 0.262 | 0.136 | +0.00004 | 0.149 |
+- an **ordinary baseline**: relation, max probability, entropy, top-2 margin;
+- a **privileged baseline**: the same plus the condition one-hot;
+- constant-confidence (0.5 and train success rate) and report-recalibration
+  baselines;
+- observable-reliability conditions versus the coherent false memory.
 
-The report tracks condition changes (within-question sign agreement ~0.60) and
-C's report is better calibrated than B's and E's (C - B sq_err -0.016, C - E
--0.011, both 5/5 seeds). But the primary endpoint fails: the output-probability
-baseline is much stronger than the report and the incremental Brier is ~0 for
-every arm. C does not improve reporting over B on added information. Because
-success is defined by sampling from the answer policy, the policy's own
-probabilities are a sufficient predictor; the toy cannot test added
-information. The next experiment must make the target depend on something the
-output distribution cannot see (a prospective target or a hidden reliability
-variable).
+Corrected preview (1 seed, reduced reporting budget):
+
+| Arm | greedy | sampled | report | constant 0.5 | recalibrated | ordinary increment | privileged increment | sq. prob. error |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A | 0.629 | 0.432 | 0.295 | 0.250 | 0.233 | +0.00007 | −0.00000 | 0.163 |
+| B | 0.637 | 0.453 | 0.300 | 0.250 | 0.236 | +0.00011 | +0.00001 | 0.170 |
+| C | 0.660 | 0.440 | 0.288 | 0.250 | 0.234 | +0.00025 | −0.00002 | 0.149 |
+| D | 0.656 | 0.439 | 0.288 | 0.250 | 0.234 | +0.00021 | −0.00002 | 0.148 |
+| E | 0.652 | 0.451 | 0.300 | 0.250 | 0.236 | +0.00014 | +0.00000 | 0.163 |
+
+Corrected reading:
+
+- **Greedy and sampled success differ.** C improves greedy top-1 over B but its
+  sampled success probability is slightly lower. C and E have nearly identical
+  greedy accuracy, so the accuracy benefit specifically from the consistency
+  term is not established.
+- **The reporter is weak.** Its raw Brier (0.29–0.30) is worse than an
+  always-0.5 predictor (0.250). Recalibrating the report improves it to
+  0.233–0.236, so its ranking carries some information but its scale is off.
+- **Removing privileged information matters.** Against the ordinary baseline
+  the increment is small but positive (up to +0.00025 for C); against the
+  privileged baseline it is ~0.
+- **C and D reduce the squared probability error** relative to B and E
+  (0.148–0.149 versus 0.163–0.170). This is a descriptive finding about
+  predicting the true success probability, not a calibration-only metric.
+- **False memories are evaluated separately** and are not part of the main
+  observable-reliability endpoint.
+
+Defensible verdict: **C improves greedy accuracy over B and reduces the
+reporter's squared probability error, but does not demonstrate incremental
+reporting value under the current comparison. The reason for that failure
+remains unresolved** (reporter learning, redundant features, privileged
+baseline information, or evaluation limits). The earlier claim that the toy is
+structurally unable to test added information was wrong: sampling does not make
+answer probabilities sufficient, because evaluating `pi(a* | q)` requires
+knowing which answer is correct.
 
 ## Endpoints
 
@@ -222,14 +248,19 @@ Implemented and tested: world semantics (including `irrelevant_swap_all` and
 resampling, arms A-E, the rollout-store reporting trainer, E1/E2 runners, CLI
 flags for the informative regime, and Slurm jobs.
 
-E1 is confirmed on the cluster (5 seeds): C improves generalization to fresh
-bindings over B by ~2.6 points, with arm E available to separate the
-consistency objective from extra supervision.
+E1 is confirmed on the cluster (5 seeds): C improves greedy accuracy over B on
+fresh bindings, but E (matched supervision) matches C in E2, so the gain
+specifically from the consistency term is not established.
 
-E2 is negative in the toy: with the fixed reporting stack, the report tracks
-condition changes but does not add information beyond the output-probability
-baseline, and C does not beat B. Because success is defined by sampling from
-the answer policy, the policy's own probabilities are a sufficient predictor.
-Before scaling to a real model, the toy needs a reporting target that the
-policy's output distribution cannot fully determine, or the claim must be
-restricted to calibration rather than added information.
+E2 audit completed: the ordinary baseline no longer receives intervention
+identity; a privileged version is reported separately; constant, recalibrated,
+and stronger probability-feature baselines are included; greedy accuracy and
+sampled success are reported separately; coherent false memories are evaluated
+separately.
+
+Current verdict: C improves greedy accuracy and reduces the reporter's squared
+probability error, but does not demonstrate incremental reporting value under
+the current comparison. The reason remains unresolved. The next step, if
+pursued, is a prospective extension: predict success after a specified change,
+with both predictors receiving the same intervention description and neither
+seeing the post-intervention state.

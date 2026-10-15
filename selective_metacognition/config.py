@@ -35,6 +35,18 @@ REPORT_CONDITIONS: tuple[str, ...] = (
     "false_memory",
 )
 
+# Observable-reliability conditions for the primary reporting endpoint.  The
+# coherent false memory is evaluated separately: its correct answer is not
+# identifiable from the input, so it cannot be part of the main task.
+OBSERVABLE_CONDITIONS: tuple[str, ...] = (
+    "clean",
+    "target_weaken",
+    "irrelevant_weaken",
+    "irrelevant_swap",
+    "target_swap_valid",
+)
+FALSE_MEMORY_CONDITIONS: tuple[str, ...] = ("false_memory",)
+
 
 @dataclass
 class ToyConfig:
