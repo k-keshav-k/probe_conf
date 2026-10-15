@@ -154,6 +154,22 @@ def cmd_e3(args) -> int:
     return 0
 
 
+def cmd_probe(args) -> int:
+    from .config import PROSPECTIVE_TYPES
+    from .diagnostics import run_probe_diagnostic
+
+    config = _build_config(args)
+    if config.report_context_dim == 0:
+        config.report_context_dim = len(PROSPECTIVE_TYPES) + 1
+    result = run_probe_diagnostic(
+        config, arms=tuple(args.arms), seed=args.seed, batches=args.batches
+    )
+    print(json.dumps(result, indent=2))
+    if args.out:
+        _save(result, args.out)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="selective_metacognition")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -185,6 +201,24 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--report-layers", type=int, default=None)
         command.add_argument("--out", type=Path, default=None)
         command.set_defaults(func=function)
+
+    probe = sub.add_parser(
+        "probe", help="representation diagnostic for prospective reporting"
+    )
+    probe.add_argument("--arms", nargs="+", default=["B", "C", "E"])
+    probe.add_argument("--seed", type=int, default=0)
+    probe.add_argument("--batches", type=int, default=40)
+    probe.add_argument("--warm-start-steps", type=int, default=None)
+    probe.add_argument("--steps", type=int, default=None)
+    probe.add_argument("--lambda-sel", type=float, default=None)
+    probe.add_argument("--spurious", type=float, default=None)
+    probe.add_argument("--overlap", type=float, default=None)
+    probe.add_argument("--dense", action="store_true")
+    probe.add_argument("--d-model", type=int, default=None)
+    probe.add_argument("--n-layers", type=int, default=None)
+    probe.add_argument("--code-dim", type=int, default=None)
+    probe.add_argument("--out", type=Path, default=None)
+    probe.set_defaults(func=cmd_probe)
     return parser
 
 

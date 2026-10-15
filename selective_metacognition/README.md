@@ -297,6 +297,25 @@ training improves the reporter's accuracy in predicting the true success
 probability, but does not demonstrate reporting information beyond clean
 output probabilities and the intervention description.
 
+### Probe diagnostic
+
+Can *any* readout of the clean hidden state plus the intervention description
+predict post-intervention success better than the baseline?  Held-out-subject
+results (1 seed, arms B/C/E; ranges across arms):
+
+| Predictor | Brier vs outcomes | Squared error vs true p |
+| --- | --- | --- |
+| Baseline (clean probabilities + description) | 0.144–0.151 | 0.043–0.047 |
+| Linear probe on clean hidden + context | 0.236–0.237 | 0.130–0.139 |
+| MLP probe on clean hidden + context (oracle target) | 0.204–0.211 | 0.102–0.107 |
+| MLP probe (outcome-mean target, as the reporter sees) | 0.210–0.215 | 0.107–0.113 |
+
+Even an MLP trained directly on the **true** post-intervention probability from
+the clean hidden is far worse than the baseline.  The clean internal state does
+not carry item-specific fragility in a readable way, so the E3 failure is
+representational for the tested readouts, not only a reporter-training
+limitation.
+
 ## Status
 
 Implemented and tested: world semantics (including `irrelevant_swap_all` and
@@ -317,7 +336,8 @@ separately.
 Current verdict: C improves greedy accuracy and reduces the reporter's squared
 probability error, but does not demonstrate incremental reporting value under
 either the E2 or the E3 comparison. E3's fair, non-privileged prospective test
-still shows negligible incremental value (≤ +0.0004 Brier) and no advantage
-over the matched-supervision arm E. The remaining question is whether the
-failure is representational (the clean internal state does not carry
-item-specific fragility) or a reporter-training limitation.
+shows negligible incremental value (≤ +0.0004 Brier) and no advantage over the
+matched-supervision arm E. The probe diagnostic indicates the failure is
+representational for the tested readouts: no linear or MLP probe on the clean
+hidden plus intervention description approaches the baseline, even when trained
+directly on the true post-intervention probability.
