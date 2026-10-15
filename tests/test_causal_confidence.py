@@ -42,7 +42,9 @@ from causal_confidence.data import (
     check_partition_isolation,
     dedupe_questions,
     leakage_scan,
+    load_cohort,
     load_manifest,
+    load_popqa,
     write_manifest,
 )
 from causal_confidence.episodes import (
@@ -483,6 +485,73 @@ class DataContracts(unittest.TestCase):
         dirty = leakage_scan(["the answer is Charles"], ["Charles"])
         self.assertFalse(dirty["clean"])
         self.assertEqual(dirty["hits"][0]["needle"], "Charles")
+
+    def test_cohort_loader_without_question_id(self):
+        """The real cohort schema may lack ``question_id``; the fallback must work."""
+
+        import tempfile
+        from pathlib import Path
+
+        import pandas as pd
+
+        frame = pd.DataFrame(
+            [
+                {
+                    "subject_id": 1,
+                    "subject_name": "A",
+                    "relation": "father",
+                    "question": "Who is the father of A?",
+                    "reference_answers": ["B"],
+                    "popularity": 10,
+                },
+                {
+                    "subject_id": 2,
+                    "subject_name": "C",
+                    "relation": "occupation",  # filtered out by the protocol
+                    "question": "What is C's occupation?",
+                    "reference_answers": ["painter"],
+                    "popularity": None,
+                },
+            ]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cohort.parquet"
+            frame.to_parquet(path)
+            rows = load_cohort(path)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0].question_id)
+        self.assertEqual(rows[0].relation, "father")
+        self.assertEqual(rows[0].references, ("B",))
+
+    def test_popqa_loader_jsonl_and_parquet(self):
+        import json as json_module
+        import tempfile
+        from pathlib import Path
+
+        import pandas as pd
+
+        record = {
+            "id": 7,
+            "subj": "X",
+            "subj_id": 3,
+            "prop": "place of birth",
+            "obj": "Y",
+            "question": "In what city was X born?",
+            "aliases": ["Y", "Y City"],
+            "s_pop": 5,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            jsonl = Path(directory) / "popqa.jsonl"
+            jsonl.write_text(json_module.dumps(record) + "\n")
+            rows = load_popqa(jsonl)
+            parquet = Path(directory) / "popqa.parquet"
+            pd.DataFrame([record]).to_parquet(parquet)
+            parquet_rows = load_popqa(parquet)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].relation, "place_of_birth")
+        self.assertIn("Y City", rows[0].references)
+        self.assertEqual(rows[0].question_id, "7")
+        self.assertEqual(len(parquet_rows), 1)
 
 
 class EvaluateContracts(unittest.TestCase):

@@ -44,9 +44,10 @@ class Question:
 
 
 def _question_key(row: dict) -> str:
-    return hashlib.sha256(
-        f"{row['subject_id']}|{row['relation']}|{row['question_text']}".encode()
-    ).hexdigest()[:16]
+    subject = row.get("subject_id", row.get("subj_id", ""))
+    relation = row.get("relation", row.get("prop", ""))
+    text = row.get("question_text", row.get("question", ""))
+    return hashlib.sha256(f"{subject}|{relation}|{text}".encode()).hexdigest()[:16]
 
 
 def load_cohort(path: str | Path) -> list[Question]:
@@ -67,11 +68,12 @@ def load_cohort(path: str | Path) -> list[Question]:
         references = record["reference_answers"]
         if isinstance(references, str):
             references = json.loads(references)
+        question_id = record.get("question_id")
+        if question_id is None:
+            question_id = _question_key(record)
         rows.append(
             Question(
-                question_id=str(
-                    record.get("question_id", _question_key(record))
-                ),
+                question_id=str(question_id),
                 subject_id=str(record["subject_id"]),
                 subject_name=str(record.get("subject_name", record["subject_id"])),
                 relation=relation,
@@ -130,9 +132,14 @@ def load_popqa(path: str | Path) -> list[Question]:
         question_text = str(record.get("question", "")).strip()
         if not question_text:
             continue
+        question_id = record.get("id")
+        if question_id is None:
+            question_id = record.get("question_id")
+        if question_id is None:
+            question_id = _question_key(record)
         rows.append(
             Question(
-                question_id=str(record.get("id", record.get("question_id", _question_key(record)))),
+                question_id=str(question_id),
                 subject_id=subject_id,
                 subject_name=str(record.get("subj", record.get("subject_name", subject_id))),
                 relation=relation,
