@@ -264,19 +264,38 @@ Training covers `target_weaken` and `irrelevant_weaken` strengths
 `{0.2, 0.5, 0.8}` and `irrelevant_swap` scales `{1, 2}`; evaluation also
 includes held-out strengths `{0.35, 0.65}` and swap scale `{3}`.
 
-Local preview (1 seed, reduced reporting budget, arms A/B/C/E):
+Cluster result (5 seeds).  Test = training strengths; held-out = unseen
+strengths/families:
 
-| Arm | clean success | report | recalibrated | baseline | incremental | held-out incr. | sq. prob. error | constant |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| A | 0.432 | 0.249 | — | 0.178 | +0.00012 | +0.00006 | 0.131 | 0.219 |
-| B | 0.453 | 0.250 | — | 0.180 | −0.00009 | −0.00003 | 0.131 | 0.227 |
-| C | 0.440 | 0.241 | — | 0.179 | +0.00026 | +0.00012 | 0.114 | 0.224 |
-| E | 0.451 | 0.241 | — | 0.179 | −0.00004 | −0.00003 | 0.117 | 0.226 |
+| Arm | clean sampled | report (test) | baseline (test) | incr. (test) | incr. (held-out) | sq. prob. error | constant |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| A | 0.408 | 0.243 | 0.173 | +0.00000 | +0.00010 | 0.125 | 0.216 |
+| B | 0.428 | 0.252 | 0.175 | +0.00001 | +0.00008 | 0.134 | 0.222 |
+| C | 0.420 | 0.245 | 0.175 | +0.00008 | +0.00040 | 0.119 | 0.220 |
+| E | 0.428 | 0.251 | 0.175 | +0.00012 | +0.00038 | 0.128 | 0.222 |
 
-The prospective baseline is weaker than in E2 (0.178 versus 0.135), so there is
-more room, and C's report again has the lowest squared probability error.  But
-the incremental value is still negligible in this single-seed preview.  A
-5-seed cluster run is needed before drawing conclusions.
+Per-seed C − B on held-out strengths: +0.00033 (5/5 seeds) — small but
+consistent.  Per-seed C − E on held-out strengths: +0.00002 (2/5 seeds) — the
+held-out gain is attributable to the extra supervision E also receives, not to
+the consistency objective.  C − B and C − E on squared probability error are
+−0.015 and −0.009 (both 5/5 seeds).
+
+Reading:
+
+- **Incremental value is negligible everywhere** (test, held-out, fresh
+  bindings).  Even after recalibration the report (0.188–0.194 on held-out
+  strengths) is weaker than the baseline (0.160–0.163), so the reporter itself
+  remains the weaker predictor.
+- **The one robust effect is squared probability error**: C's report is closer
+  to the true post-intervention success probability than B's and E's, in all
+  seeds.  This is descriptive and does not translate into incremental value.
+- **Retrieval gains remain greedy-only and match E**, as in E2.
+
+With the fair, non-privileged prospective comparison, the toy does not support
+the added-information claim.  The honest conclusion is that selectivity
+training improves the reporter's accuracy in predicting the true success
+probability, but does not demonstrate reporting information beyond clean
+output probabilities and the intervention description.
 
 ## Status
 
@@ -297,5 +316,8 @@ separately.
 
 Current verdict: C improves greedy accuracy and reduces the reporter's squared
 probability error, but does not demonstrate incremental reporting value under
-the current comparison. The reason remains unresolved. E3 (prospective
-reporting) is implemented and needs a 5-seed cluster run.
+either the E2 or the E3 comparison. E3's fair, non-privileged prospective test
+still shows negligible incremental value (≤ +0.0004 Brier) and no advantage
+over the matched-supervision arm E. The remaining question is whether the
+failure is representational (the clean internal state does not carry
+item-specific fragility) or a reporter-training limitation.
