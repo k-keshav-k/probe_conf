@@ -27,16 +27,20 @@ EPOCHS="${EPOCHS:-40}"
 REPORTER_STEPS="${REPORTER_STEPS:-1200}"
 DEVICE="${DEVICE:-}"
 EXTRA="${EXTRA:-}"
+# Concurrent seeds.  Keep this at 1 on the local AMD GPU: several training
+# processes together triggered a ROCm-level teardown and killed the batch.
+PARALLEL="${PARALLEL:-1}"
 
 mkdir -p "$OUT_ROOT"
 echo "model: $MODEL"
-echo "seeds: $SEEDS"
+echo "seeds: $SEEDS (parallel=$PARALLEL)"
 echo "out:   $OUT_ROOT"
 
 for seed in $SEEDS; do
+  while [ "$(jobs -rp | wc -l)" -ge "$PARALLEL" ]; do sleep 20; done
   log="$OUT_ROOT/seed${seed}.log"
   echo "launching seed $seed -> $log"
-  nohup .venv/bin/python -u -m causal_confidence.cli knowledge \
+  .venv/bin/python -u -m causal_confidence.cli knowledge \
     --seed "$seed" \
     --model "$MODEL" \
     --out "$OUT_ROOT/seed${seed}" \
@@ -44,7 +48,6 @@ for seed in $SEEDS; do
     --reporter-steps "$REPORTER_STEPS" \
     ${DEVICE:+--device "$DEVICE"} \
     $EXTRA > "$log" 2>&1 &
-  echo $! > "$OUT_ROOT/seed${seed}.pid"
 done
-
-echo "launched. monitor with: tail -f $OUT_ROOT/seed*.log"
+wait
+echo "all seeds finished"
