@@ -23,6 +23,8 @@ Start with `report/REPORT.html` and `report/AUDIT.md`.
 - `report/CAUSAL_CONFIDENCE_REPORT.md` — three-attempt report (toy reward arms,
   causal-intervention validation, knowledge-variant study) with figures in
   `report/figures/knowledge_confidence/`
+- `report/PROJECT_SUMMARY.md` — two-page status summary with a one-glance
+  dashboard (`fig0_summary_dashboard.png`) and the corrected results
 - `report/EXPLAINER.html` — interactive explainer of the internal signals
   (layers, MLP steps, the 17 numbers, raw vectors). Single self-contained file.
 - `report/FLOW.html` — three detailed panels: collection, internal computation
