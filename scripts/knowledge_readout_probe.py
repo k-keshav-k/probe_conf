@@ -84,6 +84,46 @@ def ridge_fit_predict(x_train, y_train, x_test, alpha=1.0):
     return np.clip(model.predict(x_test), 0.0, 1.0)
 
 
+def mlp_fit_predict(x_train, y_train, x_dev, y_dev, x_test, *, seed=0, steps=1500, hidden=128):
+    """Small MLP readout with dev-selected weight decay (bounded nonlinear check)."""
+
+    import torch
+
+    torch.set_num_threads(4)
+    mean = x_train.mean(axis=0)
+    std = x_train.std(axis=0) + 1e-6
+    xt = torch.tensor((x_train - mean) / std, dtype=torch.float32)
+    xd = torch.tensor((x_dev - mean) / std, dtype=torch.float32)
+    xs = torch.tensor((x_test - mean) / std, dtype=torch.float32)
+    yt = torch.tensor(y_train, dtype=torch.float32)
+    yd = torch.tensor(y_dev, dtype=torch.float32)
+    best = None
+    for weight_decay in (1e-5, 1e-4, 1e-3):
+        torch.manual_seed(seed)
+        net = torch.nn.Sequential(
+            torch.nn.Linear(xt.shape[1], hidden), torch.nn.GELU(),
+            torch.nn.Linear(hidden, hidden), torch.nn.GELU(),
+            torch.nn.Linear(hidden, 1),
+        )
+        optimizer = torch.optim.Adam(net.parameters(), lr=1e-3, weight_decay=weight_decay)
+        for _ in range(steps):
+            index = torch.randint(0, len(xt), (256,))
+            prediction = net(xt[index]).squeeze(1)
+            loss = (prediction - yt[index]).pow(2).mean()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+        net.eval()
+        with torch.no_grad():
+            dev_mse = float((net(xd).squeeze(1) - yd).pow(2).mean())
+        if best is None or dev_mse < best[0]:
+            best = (dev_mse, weight_decay, net)
+    _, weight_decay, net = best
+    with torch.no_grad():
+        prediction = net(xs).squeeze(1).clamp(0.0, 1.0).numpy()
+    return prediction, {"dev_mse": best[0], "weight_decay": weight_decay}
+
+
 def main() -> int:
     import os
 
@@ -98,10 +138,13 @@ def main() -> int:
 
     print("collecting train", flush=True)
     train = collect(env, splits["train"], state_paths, layers, 8, var.HELD_OUT_TEMPLATE, 8, seed, "train")
+    print("collecting dev", flush=True)
+    dev = collect(env, splits["dev"], state_paths, layers, 8, var.HELD_OUT_TEMPLATE, 8, seed + 1, "dev")
     print("collecting test", flush=True)
     test = collect(env, splits["test"], state_paths, layers, 8, var.HELD_OUT_TEMPLATE, 16, seed + 2, "test")
 
     y_train = train["outcomes"]
+    y_dev = dev["outcomes"]
     y_test = test["outcomes"]
     sets = {
         "question": ["question"],
@@ -120,7 +163,25 @@ def main() -> int:
         prediction = ridge_fit_predict(x_train, y_train, x_test)
         mse = float(((prediction - y_test) ** 2).mean())
         results[name] = {"test_squared_error": mse, "n_features": int(x_train.shape[1])}
-        print(f"{name:28s} features={x_train.shape[1]:4d} test_mse={mse:.4f}", flush=True)
+        print(f"ridge {name:28s} features={x_train.shape[1]:4d} test_mse={mse:.4f}", flush=True)
+    # Bounded nonlinear check on the hidden state (and its combinations).
+    for name in ("prefix", "hidden_raw", "prefix+hidden_raw", "prefix+rich+hidden_raw"):
+        blocks = sets[name]
+        x_train = np.concatenate([train[block] for block in blocks], axis=1).astype(np.float32)
+        x_dev = np.concatenate([dev[block] for block in blocks], axis=1).astype(np.float32)
+        x_test = np.concatenate([test[block] for block in blocks], axis=1).astype(np.float32)
+        prediction, info = mlp_fit_predict(x_train, y_train, x_dev, y_dev, x_test)
+        mse = float(((prediction - y_test) ** 2).mean())
+        results[f"mlp_{name}"] = {
+            "test_squared_error": mse,
+            "n_features": int(x_train.shape[1]),
+            **info,
+        }
+        print(
+            f"mlp   {name:28s} features={x_train.shape[1]:4d} test_mse={mse:.4f} "
+            f"(dev {info['dev_mse']:.4f}, wd {info['weight_decay']})",
+            flush=True,
+        )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(results, indent=2))
     print("written", out_path, flush=True)
