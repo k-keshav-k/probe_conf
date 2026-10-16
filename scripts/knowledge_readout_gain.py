@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from causal_confidence import knowledge as know
 from causal_confidence import variants as var
 from causal_confidence.baselines import BaselineFeatures
+from causal_confidence.evaluate import auroc
 from causal_confidence.knowledge_stages import (
     StateData,
     baseline_and_added_value,
@@ -99,6 +100,18 @@ def main() -> int:
                 tr, dv, te, oof, reporter_predictions(head, te), seed=seed
             )
             report = evaluate_reporter(head, te, label=f"{label}_{objective}")
+            # Sign-flip and per-variant diagnostics: is the incremental value
+            # just the negation of an anti-discriminating report, and does the
+            # report rank states within a variant at all?
+            predictions = reporter_predictions(head, te)
+            flipped = baseline_and_added_value(
+                tr, dv, te, oof, 1.0 - predictions, seed=seed
+            )
+            variant_ids = np.asarray(te.variant_ids)
+            per_variant = {
+                str(variant): auroc(predictions[variant_ids == variant], te.outcomes[variant_ids == variant])
+                for variant in sorted(set(te.variant_ids))
+            }
             key = f"{label}|{objective}"
             results[key] = {
                 "lambda": lam,
@@ -108,12 +121,18 @@ def main() -> int:
                 "added_ci": added["added_value"]["ci"],
                 "baseline_brier": added["added_value"]["baseline_brier"],
                 "strongest_baseline": added["strongest_baseline"],
+                "flipped_auroc": auroc(1.0 - predictions, te.outcomes),
+                "flipped_added": flipped["added_value"]["added"],
+                "flipped_added_ci": flipped["added_value"]["ci"],
+                "per_variant_auroc": per_variant,
             }
             print(
                 f"{key:34s} lambda {lam:<4} brier {report['brier']:.4f} auroc {report['auroc']:.3f} "
                 f"added {added['added_value']['added']:+.4f} "
                 f"CI [{added['added_value']['ci']['ci_low']:+.4f},{added['added_value']['ci']['ci_high']:+.4f}] "
-                f"baseline {added['added_value']['baseline_brier']:.4f}",
+                f"baseline {added['added_value']['baseline_brier']:.4f} | "
+                f"flipped auroc {results[key]['flipped_auroc']:.3f} added {results[key]['flipped_added']:+.4f} | "
+                f"per-variant {per_variant}",
                 flush=True,
             )
     out_path.parent.mkdir(parents=True, exist_ok=True)
