@@ -53,7 +53,7 @@ def panel_added_value(axis, studies):
     ]
     axis.bar(names, added, yerr=np.asarray(errors).T, capsize=4, color="tab:green")
     axis.axhline(0.0, color="black", linewidth=0.8)
-    axis.set_title("Added value vs probability baseline\n(5/5 positive, intervals above 0)")
+    axis.set_title("External readout: added value vs baseline\n(5/5 positive; report AUROC 0.39 hidden / 0.72 prob-only)")
     axis.set_ylabel("Brier improvement")
 
 
@@ -92,7 +92,7 @@ def panel_native(axis):
     axis.bar(x + 0.2, expected_corr, width=0.4, label="expected (distribution)", color="tab:blue")
     axis.axhline(0.0, color="black", linewidth=0.8)
     axis.set_xticks(x, labels, fontsize=7)
-    axis.set_title("Native arms: tracking hidden by greedy emission")
+    axis.set_title("Instillation: model's own emitted number is constant;\nthe distribution tracks weakly")
     axis.set_ylabel("within-question correlation")
     axis.legend(fontsize=7)
 
