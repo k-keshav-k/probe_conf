@@ -29,6 +29,7 @@ torch.set_num_threads(min(4, os.cpu_count() or 1))
 from transformers import Qwen2Config, Qwen2ForCausalLM
 
 from causal_confidence import interventions as iv
+from causal_confidence import stages
 from causal_confidence.baselines import (
     BaselineFeatures,
     baseline_predictions,
@@ -726,6 +727,71 @@ class BaselineContracts(unittest.TestCase):
             seed=0,
         )
         self.assertEqual(augmented.shape, (40,))
+
+
+class P2DiscoveryContracts(unittest.TestCase):
+    def _environment(self):
+        from causal_confidence.protocol import PROTOCOL
+
+        model = tiny_model(vocab_size=64, n_layers=4)
+        return stages.EpisodeEnvironment(
+            model=model,
+            tokenizer=FakeTokenizer(),
+            device=torch.device("cpu"),
+            revision="test",
+            n_layers=4,
+        )
+
+    def _questions(self):
+        return [
+            Question(
+                question_id=f"q{index}",
+                subject_id=f"s{index}",
+                subject_name=f"Subject {index}",
+                relation="father" if index % 2 == 0 else "place_of_birth",
+                question_text=f"Question number {index}?",
+                references=(f"answer_{index}",),
+                source="test",
+            )
+            for index in range(3)
+        ]
+
+    def _protocol(self, **overrides):
+        import dataclasses
+
+        from causal_confidence.protocol import PROTOCOL
+
+        intervention = dataclasses.replace(
+            PROTOCOL.intervention,
+            site_fractions=(0.5,),
+            group_sizes=(8, 16),
+            screening_questions=2,
+            screening_draws=2,
+            refinement_attenuations=(0.25,),
+            random_replicates=1,
+            **overrides,
+        )
+        return dataclasses.replace(PROTOCOL, intervention=intervention)
+
+    def test_discovery_runs_end_to_end(self):
+        env = self._environment()
+        result = stages.run_p2_discovery(
+            env,
+            self._questions(),
+            protocol=self._protocol(),
+            draws=2,
+        )
+        self.assertEqual(result["screening_questions"], 2)
+        self.assertGreaterEqual(result["projected_draws"], result["draws_used"])
+        self.assertIsNotNone(result["frozen"]["target"])
+        self.assertIn("reinsertion_max_abs_diff", result["engineering_checks"])
+        self.assertLessEqual(result["draws_used"], result["max_screening_draws"])
+
+    def test_discovery_refuses_to_exceed_draw_budget(self):
+        env = self._environment()
+        protocol = self._protocol(max_screening_draws=10)
+        with self.assertRaises(ValueError):
+            stages.run_p2_discovery(env, self._questions(), protocol=protocol, draws=2)
 
 
 class P0Contracts(unittest.TestCase):

@@ -576,6 +576,24 @@ def run_p2_discovery(
         relation_counts[question.relation] += 1
 
     screen_questions = questions[: config.screening_questions]
+
+    candidates: list[Candidate] = []
+    for site in sites:
+        global_profile = _global_profile(profiles[site])
+        for size in config.group_sizes:
+            channels = iv.top_contribution_channels(global_profile, size)
+            candidates.append(
+                Candidate(
+                    group=iv.ChannelGroup(
+                        layer=site, channels=channels, label=f"site{site}_g{size}"
+                    ),
+                    size=size,
+                )
+            )
+    candidates = candidates[: config.max_initial_candidates]
+
+    # Draw-budget guard (plan section 13): 1 clean condition + candidates +
+    # refinements + at most 2 rescue options.
     projected_draws = (
         len(screen_questions)
         * draws
@@ -599,21 +617,6 @@ def run_p2_discovery(
         for index, question in enumerate(screen_questions)
     }
     clean_success = {key: bank.success for key, bank in clean_banks.items()}
-
-    candidates: list[Candidate] = []
-    for site in sites:
-        global_profile = _global_profile(profiles[site])
-        for size in config.group_sizes:
-            channels = iv.top_contribution_channels(global_profile, size)
-            candidates.append(
-                Candidate(
-                    group=iv.ChannelGroup(
-                        layer=site, channels=channels, label=f"site{site}_g{size}"
-                    ),
-                    size=size,
-                )
-            )
-    candidates = candidates[: config.max_initial_candidates]
 
     for index, candidate in enumerate(candidates):
         candidate.screening = _screen_candidate(
