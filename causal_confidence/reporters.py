@@ -172,6 +172,14 @@ class LinearAdapter(nn.Module):
             output = output + self.scale * update.to(output.dtype)
         return output
 
+    @property
+    def in_features(self) -> int:
+        return self.base.in_features
+
+    @property
+    def out_features(self) -> int:
+        return self.base.out_features
+
 
 def install_report_adapters(
     model, layer_indices: tuple[int, ...], rank: int = PROTOCOL.report_rank
