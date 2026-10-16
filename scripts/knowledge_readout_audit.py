@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -68,9 +69,11 @@ def collect(env, facts, state_paths, layers, rank, template, draws, seed, label)
                 ids, digest = env.prefix_ids(question)
                 prefix = run_prefix(env.model, ids, capture_hidden=False, prompt_hash_value=digest)
                 logits, hidden = suffix_state(env.model, prefix, env.answer_suffix)
-                with __import__("torch").no_grad():
-                    reclaimed = lm_head(final_norm(hidden.float())).float()
-                    head_only = lm_head(hidden.float()).float()
+                with torch.no_grad():
+                    # Weights are fp16, so compute in the model dtype and
+                    # compare in float32.
+                    reclaimed = lm_head(final_norm(hidden)).float()
+                    head_only = lm_head(hidden).float()
                     reconstruction["max_abs_diff_norm_then_head"] = max(
                         reconstruction["max_abs_diff_norm_then_head"],
                         float((reclaimed - logits.float()).abs().max()),
