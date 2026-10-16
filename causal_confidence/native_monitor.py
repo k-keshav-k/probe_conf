@@ -264,6 +264,7 @@ def preservation_kl(adapted: torch.Tensor, frozen: torch.Tensor) -> torch.Tensor
 class ArmConfig:
     arm: str = "A"
     steps: int = 600
+    warmup_steps: int = 0
     lr: float = 1e-4
     beta_answer: float = 1.0
     seed: int = 0
@@ -272,6 +273,8 @@ class ArmConfig:
     def __post_init__(self):
         if self.arm not in ("A", "B", "C"):
             raise ValueError(f"unknown arm: {self.arm!r}")
+        if self.warmup_steps < 0 or self.warmup_steps > self.steps:
+            raise ValueError("warmup_steps must lie in [0, steps]")
 
 
 def train_arm(
@@ -314,7 +317,15 @@ def train_arm(
                     env.model, prefix_cache, item["input_ids"].shape[1], item["suffix_ids"],
                     grammar, requires_grad=True,
                 )
-            loss = forecast_loss(distribution["probs"], item["draws"], grammar.values)
+            values = grammar.values.to(distribution["probs"].device)
+            if step < config.warmup_steps:
+                # Probability-teacher warm start: pull the expected report
+                # toward the observed success mean before proper-score
+                # training against individual draws.
+                expected = (distribution["probs"] * values).sum()
+                loss = (expected - item["draws"].mean().to(expected.device)) ** 2
+            else:
+                loss = forecast_loss(distribution["probs"], item["draws"], values)
             if config.arm in ("B", "C") and config.beta_answer > 0:
                 # Fresh prefix caches: the report walk mutates its cache.
                 adapted_cache = prefix_with_gating(

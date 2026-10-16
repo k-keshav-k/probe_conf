@@ -143,6 +143,7 @@ def main() -> int:
     parser.add_argument("--root", required=True, help="knowledge run dir with variants/")
     parser.add_argument("--out", required=True)
     parser.add_argument("--steps", type=int, default=400)
+    parser.add_argument("--warmup-steps", type=int, default=0)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--beta-answer", type=float, default=1.0)
     parser.add_argument("--train-draws", type=int, default=8)
@@ -227,7 +228,7 @@ def main() -> int:
             prefix_and_suffix=arm_items,
             grammar=grammar,
             config=ArmConfig(
-                arm=arm, steps=args.steps, lr=args.lr,
+                arm=arm, steps=args.steps, warmup_steps=args.warmup_steps, lr=args.lr,
                 beta_answer=args.beta_answer, seed=args.seed, log_every=max(1, args.steps // 5),
             ),
         )
