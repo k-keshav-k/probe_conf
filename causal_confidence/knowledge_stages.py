@@ -181,9 +181,10 @@ def collect_states_for_variant(
         result["prefix"].append(prefix_probability_features(logits[None, :]))
         result["rich"].append(rich_prefix_features(logits[None, :]))
         # Keep the raw final hidden state, not a lossy random projection: the
-        # readout audit showed the projection destroyed usable signal.
+        # readout audit showed the projection destroyed usable signal.  Store
+        # it as a 2-D row so block concatenation keeps (n_states, dim).
         hidden = fork_hidden[0].float().cpu().numpy()
-        result["hidden"].append(hidden.astype(np.float32))
+        result["hidden"].append(hidden[None, :].astype(np.float32))
     stacked = {
         key: np.concatenate(values, axis=0).astype(np.float32)
         for key, values in result.items()
