@@ -113,6 +113,30 @@ def answer_accuracy(env, item, adapters, *, gating: bool, draws: int, seed: int)
     return float(np.mean([match_answer(draw.text, list(references)) for draw in out]))
 
 
+def infer_corpus_config(root: Path) -> tuple[int, int, int] | None:
+    """Read subjects/train/dev counts back from the knowledge manifest.
+
+    The variant checkpoints were trained on one corpus configuration; the
+    native run must use the same one or its "test" subjects are unseen.
+    """
+
+    import re
+
+    manifest_path = root / "manifests" / "knowledge_corpus.json"
+    if not manifest_path.exists():
+        return None
+    manifest = json.loads(manifest_path.read_text())
+
+    def subjects_of(fact_ids):
+        return {int(re.search(r"_s(\d+)_", fact_id).group(1)) for fact_id in fact_ids}
+
+    train = subjects_of(manifest["splits"]["train"])
+    dev = subjects_of(manifest["splits"]["dev"])
+    test = subjects_of(manifest["splits"]["test"])
+    subjects = max(train | dev | test) + 1
+    return subjects, len(train), len(dev)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="Qwen/Qwen2.5-0.5B-Instruct")
@@ -123,13 +147,24 @@ def main() -> int:
     parser.add_argument("--beta-answer", type=float, default=1.0)
     parser.add_argument("--train-draws", type=int, default=8)
     parser.add_argument("--eval-draws", type=int, default=16)
-    parser.add_argument("--subjects", type=int, default=60)
-    parser.add_argument("--train-subjects", type=int, default=36)
-    parser.add_argument("--dev-subjects", type=int, default=12)
+    parser.add_argument("--subjects", type=int, default=None)
+    parser.add_argument("--train-subjects", type=int, default=None)
+    parser.add_argument("--dev-subjects", type=int, default=None)
     parser.add_argument("--accuracy-items", type=int, default=24)
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
+    if args.subjects is None or args.train_subjects is None or args.dev_subjects is None:
+        inferred = infer_corpus_config(Path(args.root))
+        if inferred is not None:
+            args.subjects = args.subjects or inferred[0]
+            args.train_subjects = args.train_subjects or inferred[1]
+            args.dev_subjects = args.dev_subjects or inferred[2]
+            print(f"inferred corpus config from manifest: {inferred}", flush=True)
+        else:
+            args.subjects = args.subjects or 60
+            args.train_subjects = args.train_subjects or 36
+            args.dev_subjects = args.dev_subjects or 12
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
