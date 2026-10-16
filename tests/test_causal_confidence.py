@@ -266,6 +266,15 @@ class EpisodeContracts(unittest.TestCase):
         )
         self.assertFalse(result["cache_reaches"])
 
+    def test_suffix_state_matches_teacher_forced(self):
+        from causal_confidence.episodes import continue_teacher_forced, suffix_state
+
+        prefix = run_prefix(self.model, self.ids)
+        logits, hidden = suffix_state(self.model, prefix, self.suffix)
+        expected = continue_teacher_forced(self.model, prefix, self.suffix)[:, -1, :]
+        torch.testing.assert_close(logits, expected)
+        self.assertEqual(hidden.shape, (1, self.model.config.hidden_size))
+
     def test_middle_layer_hook_reaches_continuation(self):
         all_channels = tuple(range(self.model.config.intermediate_size))
         group = iv.ChannelGroup(layer=1, channels=all_channels)

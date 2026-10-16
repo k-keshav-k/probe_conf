@@ -136,13 +136,20 @@ def run_prefix(
 
 
 def _suffix_forward(
-    model, cache: object, prefix: PrefixRun, suffix_ids: torch.Tensor, *, requires_grad: bool = False
+    model,
+    cache: object,
+    prefix: PrefixRun,
+    suffix_ids: torch.Tensor,
+    *,
+    requires_grad: bool = False,
+    return_hidden: bool = False,
 ):
     """First forward over a suffix against the retained cache.
 
     ``requires_grad`` is False for every diagnostic path; reporter training
     turns it on so suffix activations carry gradients while the shared prefix
-    stays detached.
+    stays detached.  ``return_hidden`` also returns the final suffix hidden
+    state, which is the state the answer/report fork actually reads.
     """
 
     total_len = prefix.prefix_len + suffix_ids.shape[1]
@@ -167,12 +174,28 @@ def _suffix_forward(
                 prefix.prefix_len, total_len, device=suffix_ids.device
             ),
             use_cache=True,
+            output_hidden_states=return_hidden,
         )
 
     if requires_grad:
         return run()
     with torch.no_grad():
         return run()
+
+
+def suffix_state(model, prefix: PrefixRun, suffix_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Answer-fork state: ``(last logits, final hidden state)`` after the suffix.
+
+    The prefix pass's own last logits predict the suffix tokens (for the answer
+    suffix the top token is literally "Answer"); they do not describe the
+    answer fork.  Features used for confidence must come from here.
+    """
+
+    cache = copy.deepcopy(prefix.cache)
+    output = _suffix_forward(
+        model, cache, prefix, suffix_ids, requires_grad=False, return_hidden=True
+    )
+    return output.logits[:, -1, :], output.hidden_states[-1][:, -1, :]
 
 
 def continue_teacher_forced(

@@ -154,9 +154,11 @@ def collect_states_for_variant(
     for index, fact in enumerate(facts):
         question = question_from_fact(fact, template)
         ids, digest = env.prefix_ids(question)
-        from .episodes import run_prefix
+        from .episodes import run_prefix, suffix_state
 
-        prefix = run_prefix(env.model, ids, capture_hidden=True, prompt_hash_value=digest)
+        prefix = run_prefix(env.model, ids, capture_hidden=False, prompt_hash_value=digest)
+        # The answer fork is after the suffix, not at the end of the question.
+        fork_logits, fork_hidden = suffix_state(env.model, prefix, env.answer_suffix)
         draws_out = generate_answers(
             env.model,
             prefix,
@@ -175,10 +177,10 @@ def collect_states_for_variant(
         result["question"].append(
             question_features([fact.attribute], [None], [question.question_text])
         )
-        logits = prefix.last_logits[0].float().cpu().numpy()
+        logits = fork_logits[0].float().cpu().numpy()
         result["prefix"].append(prefix_probability_features(logits[None, :]))
         result["rich"].append(rich_prefix_features(logits[None, :]))
-        hidden = prefix.last_hidden[0, -1].float().cpu().numpy()
+        hidden = fork_hidden[0].float().cpu().numpy()
         result["hidden"].append(hidden_features(hidden[None, :]))
     stacked = {
         key: np.concatenate(values, axis=0).astype(np.float32)
