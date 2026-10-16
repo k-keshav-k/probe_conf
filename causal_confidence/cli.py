@@ -275,7 +275,15 @@ def command_p2_validate(args) -> int:
 def command_knowledge(args) -> int:
     """Controlled knowledge-variant feasibility study (local machine)."""
 
+    import os
+
+    import torch
+
     from .knowledge_stages import StudyConfig, run_knowledge_study
+
+    # Small CPU head fits are dominated by thread-pool overhead; cap threads so
+    # parallel runs cannot thrash the machine (observed at 1400% CPU per run).
+    torch.set_num_threads(max(1, min(int(os.environ.get("CAUSAL_CPU_THREADS", "4")), os.cpu_count() or 1)))
 
     paths = ensure_run_dirs(args.run_root)
     out = Path(args.out) if args.out else paths["root"] / "knowledge" / f"seed{args.seed}"
