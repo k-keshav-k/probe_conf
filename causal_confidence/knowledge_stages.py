@@ -280,6 +280,22 @@ def question_groups(data: StateData) -> list[list[int]]:
     return [indices for indices in groups.values() if len(indices) > 1]
 
 
+def state_groups(data: StateData) -> list[list[int]]:
+    """One group per fact; used when a split has a single variant per question."""
+
+    groups: dict[str, list[int]] = {}
+    for index, fact_id in enumerate(data.fact_ids):
+        groups.setdefault(fact_id, []).append(index)
+    return list(groups.values())
+
+
+def evaluation_groups(data: StateData) -> list[list[int]]:
+    """Multi-variant question groups when available, per-fact groups otherwise."""
+
+    groups = question_groups(data)
+    return groups if groups else state_groups(data)
+
+
 def fit_pair_reporter(
     data: StateData,
     *,
@@ -411,8 +427,10 @@ def reporter_predictions(head: GridReportHead, data: StateData) -> np.ndarray:
     return head.expected(x).numpy()
 
 
-def per_question_brier(predictions: np.ndarray, data: StateData) -> tuple[list[str], np.ndarray, np.ndarray]:
-    groups = question_groups(data)
+def per_question_brier(
+    predictions: np.ndarray, data: StateData
+) -> tuple[list[str], np.ndarray, np.ndarray]:
+    groups = evaluation_groups(data)
     subjects: list[str] = []
     values: list[float] = []
     contrast_values: list[float] = []
@@ -420,10 +438,17 @@ def per_question_brier(predictions: np.ndarray, data: StateData) -> tuple[list[s
         subjects.append(data.subject_ids[group[0]])
         error = ((predictions[group] - data.success[group]) ** 2).mean()
         values.append(float(error))
-        report_pairs = predictions[group][:, None] - predictions[group][None, :]
-        success_pairs = data.success[group][:, None] - data.success[group][None, :]
-        contrast_values.append(float(((report_pairs - success_pairs) ** 2).mean()))
+        if len(group) > 1:
+            report_pairs = predictions[group][:, None] - predictions[group][None, :]
+            success_pairs = data.success[group][:, None] - data.success[group][None, :]
+            contrast_values.append(float(((report_pairs - success_pairs) ** 2).mean()))
     return subjects, np.asarray(values), np.asarray(contrast_values)
+
+
+def _nanmean_or_none(values: np.ndarray) -> float | None:
+    finite = np.asarray(values, dtype=np.float64)
+    finite = finite[np.isfinite(finite)]
+    return float(finite.mean()) if finite.size else None
 
 
 def evaluate_reporter(head: GridReportHead, data: StateData, *, label: str) -> dict:
@@ -435,7 +460,7 @@ def evaluate_reporter(head: GridReportHead, data: StateData, *, label: str) -> d
         "n_states": int(data.n_states),
         "n_questions": len(subjects),
         "brier": float(briers.mean()),
-        "contrast_error": float(contrasts.mean()),
+        "contrast_error": _nanmean_or_none(contrasts),
         "ece": expected_calibration_error(predictions, outcomes),
         "calibration": calibration_slope_intercept(predictions, outcomes),
         "mean_report": float(predictions.mean()),
@@ -448,9 +473,12 @@ def evaluate_reporter(head: GridReportHead, data: StateData, *, label: str) -> d
 def _paired_bootstrap(
     subjects: list[str], difference: np.ndarray, *, seed: int
 ) -> dict:
+    differences = np.asarray(difference, dtype=np.float64)
+    if differences.size == 0:
+        return {"mean": None, "ci_low": None, "ci_high": None}
     payload = [
         ClusterItem(subject_id=subject, payload={"value": float(value)})
-        for subject, value in zip(subjects, difference)
+        for subject, value in zip(subjects, differences)
     ]
     result = cluster_bootstrap(
         payload,
@@ -501,8 +529,9 @@ def baseline_and_added_value(
     baseline_brier = float(((baseline_test - test.success) ** 2).mean())
     augmented_brier = float(((augmented_test - test.success) ** 2).mean())
     subjects = [subject for subject in test.subject_ids]
-    # Per-question differences clustered by subject.
-    groups = question_groups(test)
+    # Per-question differences clustered by subject; fall back to one group per
+    # fact when the split has a single variant per question (transfer).
+    groups = evaluation_groups(test)
     per_question = []
     per_subject = []
     for group in groups:
@@ -534,17 +563,26 @@ def compare_reporters(
     predictions_t2 = reporter_predictions(t2, data)
     subjects, brier_t1, contrast_t1 = per_question_brier(predictions_t1, data)
     _, brier_t2, contrast_t2 = per_question_brier(predictions_t2, data)
+    contrast_t1_value = _nanmean_or_none(contrast_t1)
+    contrast_t2_value = _nanmean_or_none(contrast_t2)
+    contrast_reduction = None
+    contrast_ci = None
+    if contrast_t1_value is not None and contrast_t1_value > 0:
+        if contrast_t2_value is not None:
+            contrast_reduction = (contrast_t1_value - contrast_t2_value) / contrast_t1_value
+        if contrast_t1.shape == contrast_t2.shape and contrast_t1.size:
+            contrast_ci = _paired_bootstrap(
+                subjects, contrast_t1 - contrast_t2, seed=seed
+            )
     return {
         "brier_t1": float(brier_t1.mean()),
         "brier_t2": float(brier_t2.mean()),
         "delta_brier": float(brier_t1.mean() - brier_t2.mean()),
         "delta_brier_ci": _paired_bootstrap(subjects, brier_t1 - brier_t2, seed=seed),
-        "contrast_t1": float(contrast_t1.mean()),
-        "contrast_t2": float(contrast_t2.mean()),
-        "contrast_reduction": float(
-            (contrast_t1.mean() - contrast_t2.mean()) / max(1e-9, contrast_t1.mean())
-        ),
-        "contrast_ci": _paired_bootstrap(subjects, contrast_t1 - contrast_t2, seed=seed),
+        "contrast_t1": contrast_t1_value,
+        "contrast_t2": contrast_t2_value,
+        "contrast_reduction": contrast_reduction,
+        "contrast_ci": contrast_ci,
     }
 
 

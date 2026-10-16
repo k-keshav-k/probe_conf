@@ -20,6 +20,7 @@ from causal_confidence import variants as var
 from causal_confidence.baselines import BaselineFeatures
 from causal_confidence.knowledge_stages import (
     StateData,
+    compare_reporters,
     evaluate_reporter,
     fit_pair_reporter,
     question_groups,
@@ -176,6 +177,18 @@ class ReporterFittingTests(unittest.TestCase):
             report_t2["contrast_error"], report_t1["contrast_error"] * 1.1
         )
         self.assertLessEqual(report_t2["brier"], 0.1)
+
+    def test_single_variant_evaluation_is_finite(self):
+        train = synthetic_states(seed=0)
+        single = synthetic_states(seed=3, variants=1)
+        head = fit_pair_reporter(train, lam=0.0, steps=50, seed=0)
+        report = evaluate_reporter(head, single, label="transfer")
+        self.assertTrue(np.isfinite(report["brier"]))
+        self.assertIsNone(report["contrast_error"])
+        comparison = compare_reporters(head, head, single, seed=0)
+        self.assertTrue(np.isfinite(comparison["brier_t1"]))
+        self.assertIsNone(comparison["contrast_reduction"])
+        self.assertIsNone(comparison["contrast_ci"])
 
     def test_lambda_selection_prefers_pair_on_dev(self):
         train = synthetic_states(seed=0)
