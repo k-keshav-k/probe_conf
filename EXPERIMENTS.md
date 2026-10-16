@@ -125,3 +125,52 @@ new results; no 7B stage has been run yet.
 
 Cluster sequence: `causal_confidence/cluster/01_p0.sbatch` through
 `04_p2_validate.sbatch`; see `causal_confidence/cluster/README.md`.
+
+## 16 October 2026 — controlled knowledge-variant study (revised protocol)
+
+After the attenuation route showed no headroom, the revised experiment built
+several versions of the same model with different factual knowledge and asked
+whether a shared confidence reporter can track which version knows what.
+
+**Substrate (verified).** A synthetic corpus of invented facts (hash-based
+values, 12-value pools; four attributes) with one training question and six
+paraphrases each. Four knowledge variants are rank-8 LoRA adapters on
+gate/up projections, trained on a balanced incomplete block design: every
+fact is learned by exactly two of four variants (each pair shares 1/6), so
+each variant knows ~half the questions and question wording is identical
+across versions. A fifth adapter on disjoint subjects/facts is the transfer
+variant. Verification trains on five templates, holds out a sixth, and gates
+on cross-variant spread, paraphrase survival, format rate, reproducibility,
+and success on unexposed facts (the last added after an earlier generator
+let variants infer unexposed facts). Three local seeds (Qwen2.5-0.5B) and one
+7B pilot all pass: spread 0.70-0.94, unexposed-fact success 0.12/0.08,
+format <= 0.008.
+
+**Reporter (negative).** Grid-mean heads over retained-state features were
+trained pointwise (T1) and with the within-question pair term (T2), inputs
+standardized with train statistics. On held-out subjects the strongest
+ordinary baseline is the prefix-probability logistic (test Brier 0.103-0.121
+at 0.5B, 0.146 at 7B). The reporter matches it only when restricted to
+question+prefix (0.106) and adds nothing (+0.0001); the paired objective
+gives a marginal contrast improvement without incremental value, and is
+worse than T1 on the main test in all three local seeds and at 7B.
+
+**Readout probes (negative).** The seeded 256-d hidden projection is not the
+bottleneck: the raw 896-d final suffix hidden state is uninformative under
+ridge (test MSE 0.255) and a regularized MLP with dev-selected weight decay
+(0.246), both at the constant-prediction level, versus 0.103 for the prefix
+probability features. The rich top-k prefix block is worse than the summary
+prefix block. No tested readout (linear or shallow nonlinear) beats the
+model's own answer-fork probabilities.
+
+**Interpretation.** On this substrate the usable competence signal is
+already in the output distribution; trained confidence reports add no
+incremental predictive value beyond the tested probability baselines (H3
+fails), and the pair objective does not improve the head family. The
+attenuation branch (P2) was still running its locked validation when this
+was written; its verdict is reported separately.
+
+Artifacts: `runs/causal_confidence/cc_v1/knowledge/seed{0,1,2}/`,
+`runs/causal_confidence/cc_v1/know7b_seed0/`, and the ablation/probe outputs
+in `scripts/knowledge_feature_ablation.py` and
+`scripts/knowledge_readout_probe.py`.
