@@ -450,14 +450,22 @@ def reporter_predictions(head: GridReportHead, data: StateData) -> np.ndarray:
 def per_question_brier(
     predictions: np.ndarray, data: StateData
 ) -> tuple[list[str], np.ndarray, np.ndarray]:
+    """Draw-level Brier per question, plus within-question contrast error.
+
+    The Brier target is every independently graded answer draw, not the
+    observed success fraction of a state: ``mean_k (c - Y_k)^2``.  Contrast
+    error still compares report differences with measured success differences
+    across variants of the same question.
+    """
+
     groups = evaluation_groups(data)
     subjects: list[str] = []
     values: list[float] = []
     contrast_values: list[float] = []
     for group in groups:
         subjects.append(data.subject_ids[group[0]])
-        error = ((predictions[group] - data.success[group]) ** 2).mean()
-        values.append(float(error))
+        error = (predictions[group][:, None] - data.outcomes[group]) ** 2
+        values.append(float(error.mean()))
         if len(group) > 1:
             report_pairs = predictions[group][:, None] - predictions[group][None, :]
             success_pairs = data.success[group][:, None] - data.success[group][None, :]
@@ -480,6 +488,9 @@ def evaluate_reporter(head: GridReportHead, data: StateData, *, label: str) -> d
         "n_states": int(data.n_states),
         "n_questions": len(subjects),
         "brier": float(briers.mean()),
+        "brier_vs_success_mean": float(
+            ((predictions - data.success) ** 2).mean()
+        ),
         "contrast_error": _nanmean_or_none(contrasts),
         "ece": expected_calibration_error(predictions, outcomes),
         "calibration": calibration_slope_intercept(predictions, outcomes),
@@ -488,6 +499,57 @@ def evaluate_reporter(head: GridReportHead, data: StateData, *, label: str) -> d
         "per_question_brier": briers.tolist(),
         "subjects": subjects,
     }
+
+
+def out_of_fold_report_predictions(
+    data: StateData,
+    *,
+    lam: float,
+    steps: int,
+    seed: int,
+    folds: int = 4,
+) -> np.ndarray:
+    """Subject-grouped out-of-fold reporter predictions for ``data``.
+
+    Second-stage predictors that include the report as an input must be fit on
+    predictions the reporter did not see during training; otherwise they
+    overtrust an overfitted reporter.  Folds keep every state of a subject
+    (and therefore of a question) together.
+    """
+
+    subjects = list(dict.fromkeys(data.subject_ids))
+    generator = np.random.default_rng(seed)
+    generator.shuffle(subjects)
+    fold_of = {subject: index % folds for index, subject in enumerate(subjects)}
+    predictions = np.full(data.n_states, np.nan, dtype=np.float64)
+    for fold in range(folds):
+        train_index = [i for i, s in enumerate(data.subject_ids) if fold_of[s] != fold]
+        test_index = [i for i, s in enumerate(data.subject_ids) if fold_of[s] == fold]
+        if not train_index or not test_index:
+            continue
+        subset = StateData(
+            fact_ids=[data.fact_ids[i] for i in train_index],
+            subject_ids=[data.subject_ids[i] for i in train_index],
+            variant_ids=[data.variant_ids[i] for i in train_index],
+            features=BaselineFeatures(
+                {key: value[train_index] for key, value in data.features.blocks.items()}
+            ),
+            outcomes=data.outcomes[train_index],
+        )
+        head = fit_pair_reporter(subset, lam=lam, steps=steps, seed=seed + fold)
+        fold_states = StateData(
+            fact_ids=[data.fact_ids[i] for i in test_index],
+            subject_ids=[data.subject_ids[i] for i in test_index],
+            variant_ids=[data.variant_ids[i] for i in test_index],
+            features=BaselineFeatures(
+                {key: value[test_index] for key, value in data.features.blocks.items()}
+            ),
+            outcomes=data.outcomes[test_index],
+        )
+        predictions[test_index] = reporter_predictions(head, fold_states)
+    if np.isnan(predictions).any():
+        raise ValueError("out-of-fold predictions did not cover every state")
+    return predictions
 
 
 def _paired_bootstrap(
@@ -512,13 +574,26 @@ def baseline_and_added_value(
     train: StateData,
     dev: StateData,
     test: StateData,
-    report_train: np.ndarray,
+    report_train: np.ndarray | None,
     report_test: np.ndarray,
     *,
     seed: int,
+    report_lambda: float = 1.0,
+    report_steps: int = 1_200,
+    folds: int = 4,
 ) -> dict:
-    """Strongest ordinary baseline on dev; fitted added-value test on test."""
+    """Strongest ordinary baseline on dev; fitted added-value test on test.
 
+    ``report_train`` must be out-of-fold (or otherwise held out) reporter
+    predictions.  When it is ``None`` they are computed here with
+    :func:`out_of_fold_report_predictions`.  Both Brier scores use individual
+    answer draws as targets.
+    """
+
+    if report_train is None:
+        report_train = out_of_fold_report_predictions(
+            train, lam=report_lambda, steps=report_steps, seed=seed, folds=folds
+        )
     train_features = BaselineFeatures(
         {key: value for key, value in train.features.blocks.items() if key != "rich"}
     )
@@ -546,9 +621,8 @@ def baseline_and_added_value(
         baseline=strongest,
         seed=seed,
     )
-    baseline_brier = float(((baseline_test - test.success) ** 2).mean())
-    augmented_brier = float(((augmented_test - test.success) ** 2).mean())
-    subjects = [subject for subject in test.subject_ids]
+    baseline_brier = float(((baseline_test[:, None] - test.outcomes) ** 2).mean())
+    augmented_brier = float(((augmented_test[:, None] - test.outcomes) ** 2).mean())
     # Per-question differences clustered by subject; fall back to one group per
     # fact when the split has a single variant per question (transfer).
     groups = evaluation_groups(test)
@@ -557,8 +631,8 @@ def baseline_and_added_value(
     for group in groups:
         per_question.append(
             float(
-                ((baseline_test[group] - test.success[group]) ** 2).mean()
-                - ((augmented_test[group] - test.success[group]) ** 2).mean()
+                ((baseline_test[group][:, None] - test.outcomes[group]) ** 2).mean()
+                - ((augmented_test[group][:, None] - test.outcomes[group]) ** 2).mean()
             )
         )
         per_subject.append(test.subject_ids[group[0]])
@@ -879,17 +953,25 @@ def run_knowledge_study(env, out_dir: str | Path, config: StudyConfig) -> dict:
         report_t1 = evaluate_reporter(t1, states, label=f"{label}_t1")
         report_t2 = evaluate_reporter(t2, states, label=f"{label}_t2")
         comparison = compare_reporters(t1, t2, states, seed=config.seed)
+        # Out-of-fold report predictions for the second-stage fit: in-sample
+        # predictions would make the augmented predictor overtrust the reporter.
+        oof_train = out_of_fold_report_predictions(
+            train_states,
+            lam=float(selection["best_lambda"]),
+            steps=config.reporter_steps,
+            seed=config.seed,
+        )
         added_t2 = baseline_and_added_value(
             train_states,
             dev_states,
             states,
-            reporter_predictions(t2, train_states),
+            oof_train,
             reporter_predictions(t2, states),
             seed=config.seed,
         )
         return {
-            "t1": {key: report_t1[key] for key in ("brier", "contrast_error", "ece", "calibration", "mean_report", "mean_success")},
-            "t2": {key: report_t2[key] for key in ("brier", "contrast_error", "ece", "calibration", "mean_report", "mean_success")},
+            "t1": {key: report_t1[key] for key in ("brier", "brier_vs_success_mean", "contrast_error", "ece", "calibration", "mean_report", "mean_success")},
+            "t2": {key: report_t2[key] for key in ("brier", "brier_vs_success_mean", "contrast_error", "ece", "calibration", "mean_report", "mean_success")},
             "comparison": comparison,
             "added_value_t2": added_t2["added_value"],
             "strongest_baseline": added_t2["strongest_baseline"],

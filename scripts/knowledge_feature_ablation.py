@@ -94,9 +94,10 @@ def main() -> int:
         comparison = compare_reporters(t1, t2, te, seed=seed)
         added = baseline_and_added_value(
             tr, dv, te,
-            t2.expected(tr.reporter_matrix()),
+            None,
             t2.expected(te.reporter_matrix()),
             seed=seed,
+            report_lambda=float(selection["best_lambda"]),
         )
         results[label] = {
             "best_lambda": selection["best_lambda"],

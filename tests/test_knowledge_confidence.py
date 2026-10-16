@@ -258,8 +258,36 @@ class ReporterFittingTests(unittest.TestCase):
         test = make(2)
         head = fit_pair_reporter(train, lam=0.0, steps=600, seed=0)
         report = evaluate_reporter(head, test, label="scaled")
-        self.assertLess(report["brier"], 0.1)
+        self.assertLess(report["brier"], 0.15)
         self.assertGreater(report["calibration"]["slope"], 0.5)
+
+    def test_out_of_fold_predictions_cover_all_states(self):
+        from causal_confidence.knowledge_stages import out_of_fold_report_predictions
+
+        data = synthetic_states(seed=7)
+        predictions = out_of_fold_report_predictions(
+            data, lam=1.0, steps=200, seed=0, folds=3
+        )
+        self.assertEqual(predictions.shape, (data.n_states,))
+        self.assertTrue(np.isfinite(predictions).all())
+        in_sample = fit_pair_reporter(data, lam=1.0, steps=200, seed=0).expected(
+            data.reporter_matrix()
+        )
+        in_sample = np.asarray(in_sample)
+        # Out-of-fold predictions must not be the in-sample ones.
+        self.assertGreater(float(np.abs(predictions - in_sample).mean()), 1e-6)
+
+    def test_brier_uses_individual_draws(self):
+        from causal_confidence.knowledge_stages import per_question_brier
+
+        data = synthetic_states(seed=3)
+        predictions = np.full(data.n_states, 0.5)
+        subjects, briers, contrasts = per_question_brier(predictions, data)
+        draws = data.outcomes
+        manual = ((predictions[:, None] - draws) ** 2).mean(axis=1)
+        groups = question_groups(data)
+        expected = np.asarray([manual[group].mean() for group in groups])
+        self.assertTrue(np.allclose(briers, expected))
 
     def test_lambda_selection_prefers_pair_on_dev(self):
         train = synthetic_states(seed=0)
