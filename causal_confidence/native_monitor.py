@@ -330,6 +330,9 @@ def train_arm(
             else:
                 loss = forecast_loss(distribution["probs"], item["draws"], values)
             if config.arm in ("B", "C") and config.beta_answer > 0:
+                # The preservation term compares *answer* forks; using the
+                # report suffix here would penalize the report distribution.
+                answer_suffix = item.get("answer_suffix_ids", item["suffix_ids"])
                 # Fresh prefix caches: the report walk mutates its cache.
                 adapted_cache = prefix_with_gating(
                     env.model,
@@ -340,7 +343,7 @@ def train_arm(
                 )
                 adapted = answer_policy(
                     env.model, adapted_cache, item["input_ids"].shape[1],
-                    item["suffix_ids"], reporter_adapters,
+                    answer_suffix, reporter_adapters,
                     enabled=True, requires_grad=True,
                 )
                 frozen_cache = prefix_with_gating(
@@ -352,7 +355,7 @@ def train_arm(
                 )
                 frozen = answer_policy(
                     env.model, frozen_cache, item["input_ids"].shape[1],
-                    item["suffix_ids"], reporter_adapters,
+                    answer_suffix, reporter_adapters,
                     enabled=False, requires_grad=False,
                 )
                 loss = loss + config.beta_answer * preservation_kl(adapted, frozen)
@@ -438,9 +441,12 @@ def emit_report(env, item, grammar: GridGrammar, *, arm: str, reporter_adapters)
             )
             values = grammar.values.to(distribution["probs"].device)
             expected = float((distribution["probs"] * values).sum())
+            best_index = int(distribution["emitted_index"])
     return {
         "string": report.string,
         "value": report.value,
         "valid": report.valid,
         "expected": expected,
+        "best_string": grammar.strings[best_index],
+        "best_value": float(grammar.values[best_index]),
     }

@@ -42,6 +42,7 @@ from .data import Question
 from .episodes import generate_answers
 from .evaluate import (
     ClusterItem,
+    auroc,
     calibration_slope_intercept,
     cluster_bootstrap,
     expected_calibration_error,
@@ -494,6 +495,7 @@ def evaluate_reporter(head: GridReportHead, data: StateData, *, label: str) -> d
         "brier_vs_success_mean": float(
             ((predictions - data.success) ** 2).mean()
         ),
+        "auroc": auroc(predictions, outcomes),
         "contrast_error": _nanmean_or_none(contrasts),
         "ece": expected_calibration_error(predictions, outcomes),
         "calibration": calibration_slope_intercept(predictions, outcomes),
@@ -766,18 +768,23 @@ def run_knowledge_study(env, out_dir: str | Path, config: StudyConfig) -> dict:
         var.remove_variant(env, adapters)
         state_paths[variant] = str(path)
         training_metrics[str(variant)] = metrics
-    transfer_path = out_dir / "variants" / f"variant_{know.TRANSFER_VARIANT_ID}.pt"
+    # Balanced transfer variant: train on half the transfer facts so the
+    # transfer set mixes known and unlearned facts (prevalence near the main
+    # splits) instead of a uniform high-success regime.
+    transfer_exposure = transfer_facts[::2]
+    transfer_path = out_dir / "variants" / f"variant_{know.TRANSFER_VARIANT_ID}_balanced.pt"
     if config.reuse_variants and transfer_path.exists():
         state_paths[know.TRANSFER_VARIANT_ID] = str(transfer_path)
-        print(f"[study {config.seed}] transfer variant: loaded", flush=True)
+        print(f"[study {config.seed}] transfer variant: loaded (balanced)", flush=True)
     else:
         print(
-            f"[study {config.seed}] transfer variant: training on {len(transfer_facts)} facts",
+            f"[study {config.seed}] transfer variant: training on "
+            f"{len(transfer_exposure)}/{len(transfer_facts)} facts",
             flush=True,
         )
         adapters, metrics = var.train_variant(
             env,
-            transfer_facts,
+            transfer_exposure,
             layers=layers,
             rank=config.rank,
             epochs=config.epochs,
@@ -953,6 +960,16 @@ def run_knowledge_study(env, out_dir: str | Path, config: StudyConfig) -> dict:
     )
 
     def evaluate_split(states: StateData, label: str) -> dict:
+        reported = (
+            "brier",
+            "brier_vs_success_mean",
+            "auroc",
+            "contrast_error",
+            "ece",
+            "calibration",
+            "mean_report",
+            "mean_success",
+        )
         report_t1 = evaluate_reporter(t1, states, label=f"{label}_t1")
         report_t2 = evaluate_reporter(t2, states, label=f"{label}_t2")
         comparison = compare_reporters(t1, t2, states, seed=config.seed)
@@ -964,6 +981,9 @@ def run_knowledge_study(env, out_dir: str | Path, config: StudyConfig) -> dict:
             steps=config.reporter_steps,
             seed=config.seed,
         )
+        oof_train_t1 = out_of_fold_report_predictions(
+            train_states, lam=0.0, steps=config.reporter_steps, seed=config.seed
+        )
         added_t2 = baseline_and_added_value(
             train_states,
             dev_states,
@@ -972,11 +992,20 @@ def run_knowledge_study(env, out_dir: str | Path, config: StudyConfig) -> dict:
             reporter_predictions(t2, states),
             seed=config.seed,
         )
+        added_t1 = baseline_and_added_value(
+            train_states,
+            dev_states,
+            states,
+            oof_train_t1,
+            reporter_predictions(t1, states),
+            seed=config.seed,
+        )
         return {
-            "t1": {key: report_t1[key] for key in ("brier", "brier_vs_success_mean", "contrast_error", "ece", "calibration", "mean_report", "mean_success")},
-            "t2": {key: report_t2[key] for key in ("brier", "brier_vs_success_mean", "contrast_error", "ece", "calibration", "mean_report", "mean_success")},
+            "t1": {key: report_t1[key] for key in reported},
+            "t2": {key: report_t2[key] for key in reported},
             "comparison": comparison,
             "added_value_t2": added_t2["added_value"],
+            "added_value_t1": added_t1["added_value"],
             "strongest_baseline": added_t2["strongest_baseline"],
         }
 
@@ -996,6 +1025,7 @@ def run_knowledge_study(env, out_dir: str | Path, config: StudyConfig) -> dict:
         "seed": config.seed,
         "stage": "complete",
         "layers": list(layers),
+        "transfer_exposure_facts": len(transfer_exposure),
         "variant_training": training_metrics,
         "verification": verification.to_json(),
         "lambda_selection": {

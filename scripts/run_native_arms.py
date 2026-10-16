@@ -247,6 +247,11 @@ def main() -> int:
                 beta_answer=args.beta_answer, seed=args.seed, log_every=max(1, args.steps // 5),
             ),
         )
+        # Save the trained reporter so decoding/calibration can be re-audited
+        # later without retraining.
+        checkpoint_dir = Path(args.out).parent / "native_adapters"
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        var.save_variant(reporter, checkpoint_dir / f"reporter_{arm}.pt")
         # Emitted reports on held-out subjects.
         emitted = []
         for item in test_items:
@@ -258,18 +263,22 @@ def main() -> int:
                     "variant": item["variant"],
                     "value": report["value"],
                     "expected": report["expected"],
+                    "best": report["best_value"],
+                    "best_string": report["best_string"],
                     "valid": report["valid"],
                     "draws": item["draws"].tolist(),
                 }
             )
         values = np.asarray([row["value"] for row in emitted], dtype=np.float64)
         expected_values = np.asarray([row["expected"] for row in emitted], dtype=np.float64)
+        best_values = np.asarray([row["best"] for row in emitted], dtype=np.float64)
         draws_matrix = np.stack([np.asarray(row["draws"], dtype=np.float64) for row in emitted])
         brier = float(((values[:, None] - draws_matrix) ** 2).mean())
         expected_brier = float(((expected_values[:, None] - draws_matrix) ** 2).mean())
+        best_brier = float(((best_values[:, None] - draws_matrix) ** 2).mean())
         emitted_success = draws_matrix.mean(axis=1)
         # Within-question tracking across variants.
-        spread, contrast, expected_spread = [], [], []
+        spread, contrast, expected_spread, best_spread = [], [], [], []
         by_fact: dict[str, list[int]] = {}
         for index, row in enumerate(emitted):
             by_fact.setdefault(row["fact_id"], []).append(index)
@@ -278,10 +287,14 @@ def main() -> int:
                 continue
             v = values[indices]
             e = expected_values[indices]
+            b = best_values[indices]
             s = emitted_success[indices]
             spread.append(float(np.corrcoef(v, s)[0, 1]) if v.std() > 0 and s.std() > 0 else 0.0)
             expected_spread.append(
                 float(np.corrcoef(e, s)[0, 1]) if e.std() > 0 and s.std() > 0 else 0.0
+            )
+            best_spread.append(
+                float(np.corrcoef(b, s)[0, 1]) if b.std() > 0 and s.std() > 0 else 0.0
             )
             difference = (v[:, None] - v[None, :]) - (s[:, None] - s[None, :])
             contrast.append(float((difference**2).mean()))
@@ -300,10 +313,14 @@ def main() -> int:
             "training": training,
             "emitted_brier": brier,
             "expected_brier": expected_brier,
+            "best_brier": best_brier,
             "emitted_valid_rate": float(np.mean([row["valid"] for row in emitted])),
             "within_question_correlation": float(np.mean(spread)) if spread else None,
             "expected_within_question_correlation": float(np.mean(expected_spread))
             if expected_spread
+            else None,
+            "best_within_question_correlation": float(np.mean(best_spread))
+            if best_spread
             else None,
             "within_question_contrast": float(np.mean(contrast)) if contrast else None,
             "answer_accuracy_enabled": float(np.mean(accuracy_enabled)),
@@ -311,12 +328,13 @@ def main() -> int:
             "emitted": emitted,
         }
         print(
-            f"arm {arm}: emitted Brier {brier:.4f} (expected {expected_brier:.4f}) "
-            f"corr {results['arms'][arm]['within_question_correlation']} "
-            f"(expected {results['arms'][arm]['expected_within_question_correlation']}) "
-            f"valid {results['arms'][arm]['emitted_valid_rate']:.3f} "
-            f"acc enabled {results['arms'][arm]['answer_accuracy_enabled']:.3f} "
-            f"frozen {results['arms'][arm]['answer_accuracy_frozen']:.3f}",
+            f"arm {arm}: emitted {brier:.4f} best-string {best_brier:.4f} "
+            f"expected {expected_brier:.4f} | corr {results['arms'][arm]['within_question_correlation']} "
+            f"best-corr {results['arms'][arm]['best_within_question_correlation']} "
+            f"expected-corr {results['arms'][arm]['expected_within_question_correlation']} "
+            f"| valid {results['arms'][arm]['emitted_valid_rate']:.3f} "
+            f"| acc {results['arms'][arm]['answer_accuracy_enabled']:.3f}/"
+            f"{results['arms'][arm]['answer_accuracy_frozen']:.3f}",
             flush=True,
         )
         remove_report_adapters(env.model, reporter)
