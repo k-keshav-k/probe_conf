@@ -37,13 +37,14 @@ MODEL="${MODEL:-Qwen/Qwen2.5-7B-Instruct}"
 SEED="${SEED:-0}"
 STEPS="${STEPS:-1500}"
 WARMUP="${WARMUP:-300}"
+BETA="${BETA:-0.1}"
 ROOT="${ROOT:-$RUN_DIR/causal_confidence/cc_v1/know7b_seed0}"
 OUT="${OUT:-$RUN_DIR/causal_confidence/cc_v1/native7b_seed0/native_arms.json}"
 
 echo "host: $(hostname)"; nvidia-smi | head -12 || true
 echo "root: $ROOT"
 echo "out:  $OUT"
-echo "model: $MODEL steps: $STEPS warmup: $WARMUP"
+echo "model: $MODEL steps: $STEPS warmup: $WARMUP beta: $BETA"
 
 mkdir -p "$(dirname "$OUT")"
 
@@ -59,5 +60,6 @@ srun apptainer exec --nv --overlay "$OVERLAY:ro" "$SIF" /bin/bash -c "
     --out $OUT \
     --steps $STEPS \
     --warmup-steps $WARMUP \
+    --beta-answer $BETA \
     --seed $SEED
 "

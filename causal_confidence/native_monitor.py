@@ -265,6 +265,7 @@ class ArmConfig:
     arm: str = "A"
     steps: int = 600
     warmup_steps: int = 0
+    share_after_warmup: bool = True
     lr: float = 1e-4
     beta_answer: float = 1.0
     seed: int = 0
@@ -303,7 +304,9 @@ def train_arm(
         if step % len(order) == 0:
             generator.shuffle(order)
         item = prefix_and_suffix[int(order[step % len(order)])]
-        adapters_on_prefix = config.arm in ("B", "C")
+        adapters_on_prefix = config.arm in ("B", "C") and (
+            not config.share_after_warmup or step >= config.warmup_steps
+        )
         with _variant_installed(env, item):
             prefix_cache = prefix_with_gating(
                 env.model,
