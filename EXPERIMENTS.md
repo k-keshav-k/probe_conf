@@ -174,3 +174,28 @@ Artifacts: `runs/causal_confidence/cc_v1/knowledge/seed{0,1,2}/`,
 `runs/causal_confidence/cc_v1/know7b_seed0/`, and the ablation/probe outputs
 in `scripts/knowledge_feature_ablation.py` and
 `scripts/knowledge_readout_probe.py`.
+
+## 16 October 2026 — P2 locked validation: attenuation branch closed
+
+The p2c validation finished: 963 validation items, 15,408 draws, six slots
+plus five matched-random replicates and norm/other-group controls, gates
+unchanged from the frozen protocol. All three prespecified gates fail.
+
+| Gate | Effect | Threshold | Result |
+| --- | --- | --- | --- |
+| Target damage (strong) | +0.0025 [-0.0005, +0.0057] | >= 0.05 | fail |
+| Target minus matched random | +0.0024 [-0.0009, +0.0057] | >= 0.03 | fail |
+| Restoration recovery | -0.077 | >= 0.5 | fail |
+
+Clean success is 6.0% on this pool. Per-relation damage is within noise
+(father +0.28 pts, mother -0.15 pts, place of birth +0.57 pts), the
+unrelated-task check shows no damage (-0.15), and the matched-random and
+other-group controls are indistinguishable from the target. The attenuation
+manipulation has no usable effect, so the intervention-dependent training
+branch (P3-P6) stops here, per the plan's decision table. With the
+knowledge-variant study also negative on added value (previous entry), the
+current evidence supports neither causal-supervision route for incremental
+confidence value.
+
+Artifacts: `runs/section33_v1/causal_confidence/cc_v1/p2c/` (validation JSON,
+per-question outcomes, damage/restoration and per-question figures).
