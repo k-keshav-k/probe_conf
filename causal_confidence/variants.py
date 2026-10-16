@@ -262,6 +262,7 @@ class VerificationConfig:
     min_paraphrase_ratio: float = 0.5
     max_format_rate: float = 0.10
     min_reproducibility: float = 0.40
+    max_unknown_success: float = 0.20
 
 
 @dataclass
@@ -331,6 +332,21 @@ def verify_knowledge(
         max(stats.get("empty_rate", 0.0), stats.get("truncation_rate", 0.0))
         for stats in format_stats.values()
     )
+    # Exposure must be the only way to know a fact: success on facts the
+    # variant was never exposed to must stay near zero.  This is the direct
+    # manipulation check against generator regularities or other shortcuts.
+    unknown_success = {}
+    for variant in variants:
+        unknown_ids = [
+            fact_id
+            for fact_id in success_by_variant[variant]
+            if fact_id not in known_facts.get(variant, set())
+        ]
+        unknown_success[str(variant)] = (
+            sum(success_by_variant[variant][fact_id] for fact_id in unknown_ids)
+            / max(1, len(unknown_ids))
+        )
+    max_unknown = max(unknown_success.values()) if unknown_success else 1.0
     reproducibility_values = [
         value for value in (reproducibility or {}).values() if value is not None
     ]
@@ -343,6 +359,7 @@ def verify_knowledge(
         and spread_fraction >= config.min_spread_fraction
         and paraphrase_ratio >= config.min_paraphrase_ratio
         and max_format <= config.max_format_rate
+        and max_unknown <= config.max_unknown_success
         and (
             min_reproducibility is None
             or min_reproducibility >= config.min_reproducibility
@@ -355,6 +372,8 @@ def verify_knowledge(
             "mean_spread": mean_spread,
             "spread_fraction": spread_fraction,
             "variant_means": variant_means,
+            "unknown_success": unknown_success,
+            "max_unknown_success": max_unknown,
             "paraphrase_ratios": paraphrase_ratios,
             "min_paraphrase_ratio": paraphrase_ratio,
             "max_format_rate": max_format,
@@ -365,6 +384,7 @@ def verify_knowledge(
                 "min_paraphrase_ratio": config.min_paraphrase_ratio,
                 "max_format_rate": config.max_format_rate,
                 "min_reproducibility": config.min_reproducibility,
+                "max_unknown_success": config.max_unknown_success,
             },
         },
     )

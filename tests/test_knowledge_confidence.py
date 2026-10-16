@@ -40,6 +40,26 @@ class CorpusAndDesignTests(unittest.TestCase):
             for text in (fact.train_question, *fact.eval_questions):
                 self.assertNotIn(fact.value.lower(), text.lower())
 
+    def test_values_are_not_inferable_from_subject_index(self):
+        facts = know.build_corpus(30, seed=0)
+        by_subject: dict[str, dict[str, str]] = {}
+        for fact in facts:
+            by_subject.setdefault(fact.subject_id, {})[fact.attribute] = fact.value
+        subjects = sorted(by_subject)
+        matches = 0
+        total = 0
+        for attribute in ("emblem", "mentor", "workshop"):
+            for index in range(len(subjects) - 5):
+                total += 1
+                if (
+                    by_subject[subjects[index]][attribute]
+                    == by_subject[subjects[index + 5]][attribute]
+                ):
+                    matches += 1
+        # Random per-fact values collide about 1/12 of the time; a value
+        # formula tied to the subject index would collide near 1.0.
+        self.assertLess(matches / total, 0.5)
+
     def test_exposure_is_counterbalanced(self):
         facts = know.build_corpus(24, seed=0)
         exposure = know.assign_exposure(facts)
@@ -109,6 +129,21 @@ class VerificationGateTests(unittest.TestCase):
             reproducibility={v: 0.8 for v in by_variant},
         )
         self.assertFalse(report.passed)
+
+    def test_gate_fails_when_unexposed_facts_are_known(self):
+        by_variant = {v: {f"fact{i}": 0.9 for i in range(10)} for v in (1, 2, 3, 4)}
+        known = {v: {f"fact{i}" for i in range(5)} for v in by_variant}
+        report = var.verify_knowledge(
+            by_variant,
+            known_facts=known,
+            train_template_success={
+                v: {f"fact{i}": 0.9 for i in range(5)} for v in by_variant
+            },
+            format_stats={v: {"empty_rate": 0.0, "truncation_rate": 0.0} for v in by_variant},
+            reproducibility={v: 0.8 for v in by_variant},
+        )
+        self.assertFalse(report.passed)
+        self.assertGreater(report.details["max_unknown_success"], 0.5)
 
     def test_gate_fails_on_template_memorization(self):
         by_variant = {}

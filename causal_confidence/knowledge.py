@@ -90,10 +90,24 @@ _SYLLABLES = (
     "nel", "tor", "mi", "gan", "lor", "ven", "syl", "dar", "quen", "pol",
 )
 _VALUE_POOLS = {
-    "mentor": ("Varo Kest", "Liris Mund", "Toran Vale", "Mira Belen", "Dravin Sol"),
-    "workshop": ("Kaldun", "Vessport", "Oruna", "Telmara", "Brinwick"),
-    "emblem": ("amber", "cobalt", "crimson", "jade", "violet"),
-    "instrument": ("kestrel harp", "drum luth", "silk pipe", "glass horn", "reed organ"),
+    "mentor": (
+        "Varo Kest", "Liris Mund", "Toran Vale", "Mira Belen", "Dravin Sol",
+        "Pella Rune", "Cadoras Vey", "Ilma Tarn", "Beryn Oak", "Sella Marr",
+        "Quorin Fenn", "Nadia Wren",
+    ),
+    "workshop": (
+        "Kaldun", "Vessport", "Oruna", "Telmara", "Brinwick", "Aelmouth",
+        "Cindral", "Dremnor", "Halvun", "Irmath", "Pellmoor", "Quarn",
+    ),
+    "emblem": (
+        "amber", "cobalt", "crimson", "jade", "violet", "ochre", "teal",
+        "maroon", "indigo", "saffron", "pearl", "umber",
+    ),
+    "instrument": (
+        "kestrel harp", "drum luth", "silk pipe", "glass horn", "reed organ",
+        "bronze flute", "shadow fiddle", "crystal bell", "hollow lute",
+        "silver chime", "wind cello", "amber gong",
+    ),
 }
 
 
@@ -101,6 +115,21 @@ def _name(index: int) -> str:
     first = _SYLLABLES[index % len(_SYLLABLES)]
     second = _SYLLABLES[(index * 7 + 3) % len(_SYLLABLES)]
     return (first + second).capitalize()
+
+
+def _fact_value(attribute: str, subject_id: str, seed: int) -> str:
+    """Deterministic but per-fact value assignment.
+
+    An earlier version derived values from the subject index and attribute,
+    which made unexposed facts inferable from the subject-name pattern.  The
+    value must be independent of both so that exposure is the only way to
+    learn it.
+    """
+
+    pool = _VALUE_POOLS[attribute]
+    digest = hashlib.sha256(f"{seed}|{subject_id}|{attribute}".encode()).digest()
+    index = int.from_bytes(digest[:4], "big") % len(pool)
+    return pool[index]
 
 
 @dataclass(frozen=True)
@@ -133,9 +162,7 @@ def build_corpus(
         subject_name = _name(seed * 1000 + subject_index)
         for attribute_index, attribute in enumerate(ATTRIBUTES):
             templates = TEMPLATES[attribute]
-            value = _VALUE_POOLS[attribute][
-                (subject_index * 7 + attribute_index * 3 + seed) % len(_VALUE_POOLS[attribute])
-            ]
+            value = _fact_value(attribute, subject_id, seed)
             fact_id = f"{subject_id}_{attribute}"
             facts.append(
                 Fact(
