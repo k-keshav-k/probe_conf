@@ -36,7 +36,7 @@ echo "out:   $OUT_ROOT"
 for seed in $SEEDS; do
   log="$OUT_ROOT/seed${seed}.log"
   echo "launching seed $seed -> $log"
-  .venv/bin/python -u -m causal_confidence.cli knowledge \
+  nohup .venv/bin/python -u -m causal_confidence.cli knowledge \
     --seed "$seed" \
     --model "$MODEL" \
     --out "$OUT_ROOT/seed${seed}" \
