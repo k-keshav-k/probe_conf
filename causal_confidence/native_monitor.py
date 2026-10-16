@@ -247,6 +247,8 @@ def answer_policy(
 def forecast_loss(probs: torch.Tensor, draws: torch.Tensor, values: torch.Tensor) -> torch.Tensor:
     """Proper score over the emitted distribution: mean_k sum_g p_g (g - Y_k)^2."""
 
+    values = values.to(device=probs.device, dtype=probs.dtype)
+    draws = draws.to(device=probs.device, dtype=probs.dtype)
     error = (values[None, :] - draws[:, None]) ** 2
     return (probs[None, :] * error).sum(dim=-1).mean()
 
