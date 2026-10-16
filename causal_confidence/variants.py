@@ -104,9 +104,14 @@ def _training_example(env, fact: Fact, template: str = "train"):
     prefix_ids, _ = build_prefix_ids(env.tokenizer, question_text)
     suffix = answer_suffix_ids(env.tokenizer)
     value = tokenize_text(env.tokenizer, " " + fact.value).squeeze(0)
-    input_ids = torch.cat([prefix_ids.squeeze(0), suffix.squeeze(0), value], dim=0)
+    eos = env.tokenizer.eos_token_id
+    if eos is None:
+        raise ValueError("tokenizer has no eos token; cannot teach answer termination")
+    eos_token = torch.tensor([int(eos)], dtype=torch.long)
+    target = torch.cat([value, eos_token], dim=0)
+    input_ids = torch.cat([prefix_ids.squeeze(0), suffix.squeeze(0), target], dim=0)
     labels = torch.full_like(input_ids, -100)
-    labels[-value.shape[0] :] = value
+    labels[-target.shape[0] :] = target
     return input_ids, labels
 
 

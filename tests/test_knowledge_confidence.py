@@ -193,6 +193,23 @@ class ReporterFittingTests(unittest.TestCase):
 
 
 class VariantTrainingTests(unittest.TestCase):
+    def test_training_example_ends_with_eos(self):
+        from causal_confidence.stages import EpisodeEnvironment
+
+        model = tiny_model(vocab_size=64, n_layers=2)
+        env = EpisodeEnvironment(
+            model=model,
+            tokenizer=FakeTokenizer(),
+            device=torch.device("cpu"),
+            revision="test",
+            n_layers=2,
+        )
+        fact = know.build_corpus(1, seed=0)[0]
+        input_ids, labels = var._training_example(env, fact, "train")
+        self.assertEqual(int(input_ids[-1]), env.tokenizer.eos_token_id)
+        self.assertEqual(int(labels[-1]), env.tokenizer.eos_token_id)
+        self.assertEqual(int(labels[0]), -100)
+
     def test_train_save_load_roundtrip(self):
         import tempfile
         from pathlib import Path
