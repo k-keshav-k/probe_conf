@@ -306,12 +306,14 @@ def generate_answer(
         cache = output.past_key_values
         total_len += 1
         next_logits = output.logits[0, -1]
-        text = tokenizer.decode(generated, skip_special_tokens=True)
-        if any(stop in text for stop in stop_strings):
+        # Chat-style continuations often start with a newline; leading
+        # whitespace must not trigger the stop rule before any content exists.
+        text = tokenizer.decode(generated, skip_special_tokens=True).lstrip()
+        if text and any(stop in text for stop in stop_strings):
             finished = True
             stop_reason = "stop_string"
             break
-    text = tokenizer.decode(generated, skip_special_tokens=True)
+    text = tokenizer.decode(generated, skip_special_tokens=True).lstrip()
     for stop in stop_strings:
         if stop in text:
             text = text.split(stop)[0]

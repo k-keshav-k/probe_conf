@@ -20,6 +20,10 @@ sbatch --account="$TORCH_ACCOUNT" --chdir="$REPO" causal_confidence/cluster/03_p
 
 # P2 validation: one locked evaluation on the independent validation pool
 sbatch --account="$TORCH_ACCOUNT" --chdir="$REPO" causal_confidence/cluster/04_p2_validate.sbatch
+
+# Knowledge-variant feasibility (revised protocol; one seed per job)
+MODEL=Qwen/Qwen2.5-7B-Instruct SEED=0 sbatch --account="$TORCH_ACCOUNT" --chdir="$REPO" \
+  causal_confidence/cluster/05_knowledge.sbatch
 ```
 
 Fetch results (mirror ``$RUN_DIR`` on the laptop; replace the run id):

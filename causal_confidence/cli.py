@@ -272,6 +272,69 @@ def command_p2_validate(args) -> int:
     return 0 if result["passed"] else 1
 
 
+def command_knowledge(args) -> int:
+    """Controlled knowledge-variant feasibility study (local machine)."""
+
+    from .knowledge_stages import StudyConfig, run_knowledge_study
+
+    paths = ensure_run_dirs(args.run_root)
+    out = Path(args.out) if args.out else paths["root"] / "knowledge" / f"seed{args.seed}"
+    model = args.model
+    revision = PROTOCOL.model_revision if model == PROTOCOL.model_name else None
+    env = stages.load_model_and_tokenizer(
+        model, revision=revision, device=args.device, dtype=args.dtype
+    )
+    config = StudyConfig(
+        seed=args.seed,
+        subjects=args.subjects,
+        transfer_subjects=args.transfer_subjects,
+        train_subjects=args.train_subjects,
+        dev_subjects=args.dev_subjects,
+        epochs=args.epochs,
+        rank=args.rank,
+        train_draws=args.train_draws,
+        eval_draws=args.eval_draws,
+        reporter_steps=args.reporter_steps,
+        reuse_variants=not args.no_reuse,
+    )
+    if args.smoke:
+        import dataclasses
+
+        config = dataclasses.replace(
+            config,
+            subjects=8,
+            transfer_subjects=3,
+            train_subjects=4,
+            dev_subjects=2,
+            reporter_steps=60,
+            train_draws=2,
+            eval_draws=4,
+        )
+    result = run_knowledge_study(env, out, config)
+    summary = {
+        "stage": result["stage"],
+        "seed": result["seed"],
+        "output": str(out),
+    }
+    if result["stage"] == "complete":
+        summary["verification_passed"] = result["verification"]["passed"]
+        summary["best_lambda"] = result["lambda_selection"]["best_lambda"]
+        summary["test"] = {
+            "brier_t1": result["test"]["comparison"]["brier_t1"],
+            "brier_t2": result["test"]["comparison"]["brier_t2"],
+            "delta_brier": result["test"]["comparison"]["delta_brier"],
+            "added_value": result["test"]["added_value_t2"]["added"],
+            "strongest_baseline": result["test"]["strongest_baseline"],
+        }
+        summary["transfer_unseen_variant"] = {
+            "brier_t1": result["transfer_unseen_variant"]["comparison"]["brier_t1"],
+            "brier_t2": result["transfer_unseen_variant"]["comparison"]["brier_t2"],
+            "added_value": result["transfer_unseen_variant"]["added_value_t2"]["added"],
+        }
+    print(json.dumps(summary, indent=2))
+    return 0 if result["stage"] == "complete" else 2
+
+
 def command_gated(name: str):
     def run(args) -> int:
         try:
@@ -352,6 +415,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     audit = sub.add_parser("audit", help="verify frozen artifacts")
     audit.set_defaults(func=command_audit)
+
+    knowledge = sub.add_parser(
+        "knowledge", help="controlled knowledge-variant study (local feasibility)"
+    )
+    knowledge.add_argument("--seed", type=int, default=0)
+    knowledge.add_argument("--out", default=None)
+    knowledge.add_argument("--model", default=SMOKE_MODEL)
+    knowledge.add_argument("--device", default=None)
+    knowledge.add_argument("--dtype", default="auto")
+    knowledge.add_argument("--epochs", type=int, default=40)
+    knowledge.add_argument("--reporter-steps", type=int, default=1_200)
+    knowledge.add_argument("--no-reuse", action="store_true")
+    knowledge.add_argument("--smoke", action="store_true")
+    knowledge.set_defaults(func=command_knowledge)
 
     smoke = sub.add_parser("smoke", help="small-model end-to-end smoke")
     smoke.add_argument("--end-to-end", action="store_true")
