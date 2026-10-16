@@ -154,6 +154,14 @@ def main() -> int:
     parser.add_argument("--accuracy-items", type=int, default=24)
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--arms", nargs="+", default=["A", "B", "C"])
+    parser.add_argument(
+        "--reporter-layers",
+        default=None,
+        help="comma-separated decoder layers for the reporter adapter; "
+        "default is the middle layer",
+    )
+    parser.add_argument("--reporter-rank", type=int, default=8)
     args = parser.parse_args()
     if args.subjects is None or args.train_subjects is None or args.dev_subjects is None:
         inferred = infer_corpus_config(Path(args.root))
@@ -172,7 +180,10 @@ def main() -> int:
     env = load_model_and_tokenizer(args.model, revision=None, device=args.device, dtype="auto")
     n_layers = int(env.model.config.num_hidden_layers)
     variant_layers = var.default_adapter_layers(n_layers)
-    reporter_layers = (n_layers // 2,)
+    if args.reporter_layers:
+        reporter_layers = tuple(int(item) for item in args.reporter_layers.split(","))
+    else:
+        reporter_layers = (n_layers // 2,)
 
     facts = know.build_corpus(args.subjects, seed=args.seed)
     splits = know.split_by_subject(
@@ -208,14 +219,18 @@ def main() -> int:
     results: dict = {
         "model": args.model,
         "steps": args.steps,
+        "warmup_steps": args.warmup_steps,
+        "beta_answer": args.beta_answer,
+        "reporter_layers": list(reporter_layers),
+        "reporter_rank": args.reporter_rank,
         "n_train_items": len(train_items),
         "n_test_items": len(test_items),
         "arms": {},
     }
-    for arm in ("A", "B", "C"):
+    for arm in args.arms:
         print(f"=== training arm {arm} ===", flush=True)
         freeze_answer_policy(env.model)
-        reporter = install_report_adapters(env.model, reporter_layers, rank=8)
+        reporter = install_report_adapters(env.model, reporter_layers, rank=args.reporter_rank)
         for parameter in reporter_parameters(env.model):
             parameter.requires_grad_(True)
         arm_items = [
