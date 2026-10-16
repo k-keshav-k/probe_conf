@@ -20,6 +20,9 @@ Start with `report/REPORT.html` and `report/AUDIT.md`.
 - `report/REPORT.md`, `report/REPORT.html`, `report/REPORT.pdf` — paper-style
   report using ASD-STE100 writing principles, with figures, citations,
   and appendices (the HTML is a single self-contained file with embedded images)
+- `report/CAUSAL_CONFIDENCE_REPORT.md` — three-attempt report (toy reward arms,
+  causal-intervention validation, knowledge-variant study) with figures in
+  `report/figures/knowledge_confidence/`
 - `report/EXPLAINER.html` — interactive explainer of the internal signals
   (layers, MLP steps, the 17 numbers, raw vectors). Single self-contained file.
 - `report/FLOW.html` — three detailed panels: collection, internal computation
