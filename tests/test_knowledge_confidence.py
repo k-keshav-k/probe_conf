@@ -157,8 +157,7 @@ def synthetic_states(seed: int = 0, questions: int = 12, variants: int = 4) -> S
     )
 
 
-class ReporterFittingTests(unittest.TestCase):
-    def test_pair_objective_reduces_contrast_error(self):
+class ReporterFittingTests(unittest.TestCase):    def test_pair_objective_reduces_contrast_error(self):
         train = synthetic_states(seed=0)
         test = synthetic_states(seed=1)
         groups = question_groups(train)
@@ -223,6 +222,21 @@ class VariantTrainingTests(unittest.TestCase):
                 torch.allclose(loaded[0].lora_a.detach(), before)
             )
             var.remove_variant(env, loaded)
+
+
+class CliContractTests(unittest.TestCase):
+    def test_knowledge_parser_exposes_study_flags(self):
+        from causal_confidence.cli import build_parser
+
+        args = build_parser().parse_args(["knowledge", "--seed", "0"])
+        self.assertEqual(args.seed, 0)
+        self.assertEqual(args.subjects, 60)
+        self.assertEqual(args.transfer_subjects, 15)
+        self.assertEqual(args.train_subjects, 36)
+        self.assertEqual(args.dev_subjects, 12)
+        self.assertEqual(args.rank, 8)
+        self.assertEqual(args.train_draws, 8)
+        self.assertEqual(args.eval_draws, 16)
 
 
 if __name__ == "__main__":
