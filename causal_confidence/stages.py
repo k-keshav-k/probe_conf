@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import math
+import random
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -558,6 +559,75 @@ def _screen_candidate(
     }
 
 
+def stratified_screening_subset(
+    questions: list[Question], size: int, *, seed: int
+) -> tuple[list[Question], dict[str, int]]:
+    """Deterministic stratified screening subset plus its cell counts.
+
+    The discovery partition is sorted by relation, so taking its first N
+    questions screens one relation only.  This round-robins over
+    (relation, popularity band) cells so the screening distribution matches
+    the mixed validation pool.  Selection is outcome-blind; popularity bands
+    are computed over the discovery pool itself.
+    """
+
+    if len(questions) <= size:
+        subset = list(questions)
+        counts: dict[str, int] = {}
+        for question in subset:
+            key = f"{question.relation}|all"
+            counts[key] = counts.get(key, 0) + 1
+        return subset, counts
+    import math
+
+    known = [
+        float(question.popularity)
+        for question in questions
+        if question.popularity is not None
+        and not (isinstance(question.popularity, float) and math.isnan(question.popularity))
+    ]
+    low = mid = None
+    if known:
+        low, mid = (float(value) for value in np.quantile(known, [1 / 3, 2 / 3]))
+
+    def band(question: Question) -> str:
+        value = question.popularity
+        if (
+            low is None
+            or mid is None
+            or value is None
+            or (isinstance(value, float) and math.isnan(value))
+        ):
+            return "unknown"
+        value = float(value)
+        if value <= low:
+            return "tail"
+        if value <= mid:
+            return "mid"
+        return "head"
+
+    cells: dict[tuple[str, str], list[Question]] = defaultdict(list)
+    for question in questions:
+        cells[(question.relation, band(question))].append(question)
+    generator = random.Random(seed)
+    for values in cells.values():
+        generator.shuffle(values)
+    chosen: list[Question] = []
+    keys = sorted(cells)
+    while len(chosen) < size and any(cells.values()):
+        for key in keys:
+            if not cells[key]:
+                continue
+            chosen.append(cells[key].pop())
+            if len(chosen) >= size:
+                break
+    counts = {}
+    for question in chosen:
+        key = f"{question.relation}|{band(question)}"
+        counts[key] = counts.get(key, 0) + 1
+    return chosen, counts
+
+
 def run_p2_discovery(
     env: EpisodeEnvironment,
     questions: list[Question],
@@ -576,7 +646,9 @@ def run_p2_discovery(
     for question in questions:
         relation_counts[question.relation] += 1
 
-    screen_questions = questions[: config.screening_questions]
+    screen_questions, screening_strata = stratified_screening_subset(
+        questions, config.screening_questions, seed=seed
+    )
 
     candidates: list[Candidate] = []
     for site in sites:
@@ -802,6 +874,7 @@ def run_p2_discovery(
         "model": {"name": protocol.model_name, "revision": env.revision},
         "n_questions": len(questions),
         "screening_questions": len(screen_questions),
+        "screening_strata": screening_strata,
         "draws_per_condition": draws,
         "candidates": [candidate.to_json() for candidate in candidates],
         "refinements": refinements,

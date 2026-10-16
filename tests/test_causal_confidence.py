@@ -800,10 +800,39 @@ class P2DiscoveryContracts(unittest.TestCase):
             draws=2,
         )
         self.assertEqual(result["screening_questions"], 2)
+        self.assertIn("screening_strata", result)
         self.assertGreaterEqual(result["projected_draws"], result["draws_used"])
         self.assertIsNotNone(result["frozen"]["target"])
         self.assertIn("reinsertion_max_abs_diff", result["engineering_checks"])
         self.assertLessEqual(result["draws_used"], result["max_screening_draws"])
+
+    def test_stratified_screening_covers_relations_and_popularity(self):
+        questions = [
+            Question(
+                question_id=f"q{relation}_{index}",
+                subject_id=f"s{relation}_{index}",
+                subject_name=f"Subject {relation} {index}",
+                relation=relation,
+                question_text=f"Question {relation} {index}?",
+                references=(f"answer_{relation}_{index}",),
+                popularity=float(index * 10),
+                source="test",
+            )
+            for relation in ("father", "mother", "place_of_birth")
+            for index in range(20)
+        ]
+        subset, counts = stages.stratified_screening_subset(questions, 12, seed=0)
+        self.assertEqual(len(subset), 12)
+        self.assertEqual(len({item.question_id for item in subset}), 12)
+        self.assertEqual(
+            {item.relation for item in subset}, {"father", "mother", "place_of_birth"}
+        )
+        bands = {key.split("|")[1] for key in counts}
+        self.assertEqual(bands, {"tail", "mid", "head"})
+        # Deterministic for a fixed seed.
+        again, counts_again = stages.stratified_screening_subset(questions, 12, seed=0)
+        self.assertEqual([item.question_id for item in again], [item.question_id for item in subset])
+        self.assertEqual(counts_again, counts)
 
     def test_discovery_refuses_to_exceed_draw_budget(self):
         env = self._environment()
