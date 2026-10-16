@@ -43,9 +43,11 @@ class GridWalkTests(unittest.TestCase):
         self.prefix = run_prefix(self.model, self.ids, capture_hidden=False)
 
     def test_walk_matches_brute_force_sequence_scoring(self):
+        import copy
+
         result = grid_distribution_on_cache(
             self.model,
-            self.prefix.cache,
+            copy.deepcopy(self.prefix.cache),  # the walk mutates its cache
             self.prefix.prefix_len,
             self.suffix,
             self.grammar,

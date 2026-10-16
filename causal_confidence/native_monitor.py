@@ -84,13 +84,16 @@ def build_grid_grammar(tokenizer, strings: tuple[str, ...] | None = None) -> Gri
 # Trie walk against a retained cache (differentiable)
 # ---------------------------------------------------------------------------
 def _select_cache_rows(cache, parent_indices: list[int]):
+    """Reorder/duplicate cache rows in place (differentiable indexing)."""
+
     indices = torch.tensor(parent_indices, dtype=torch.long)
-    selected = copy.deepcopy(cache)
-    selected.batch_select_indices(indices)
-    return selected
+    cache.batch_select_indices(indices)
+    return cache
 
 
 def _suffix_forward(model, cache, prefix_len: int, suffix_ids: torch.Tensor, *, requires_grad: bool):
+    """Continue the suffix against ``cache`` (the cache is mutated in place)."""
+
     total = prefix_len + suffix_ids.shape[1]
     attention = torch.ones((suffix_ids.shape[0], total), dtype=torch.long, device=suffix_ids.device)
     cache_position = torch.arange(prefix_len, total, device=suffix_ids.device)
@@ -141,7 +144,7 @@ def grid_distribution_on_cache(
     """Distribution over the grammar strings from an answer-fork prefix cache."""
 
     logits, cache = _suffix_forward(
-        model, copy.deepcopy(prefix_cache), prefix_len, suffix_ids, requires_grad=requires_grad
+        model, prefix_cache, prefix_len, suffix_ids, requires_grad=requires_grad
     )
     total_len = prefix_len + suffix_ids.shape[1]
     rows: list[tuple[int, ...]] = [()]
@@ -229,10 +232,11 @@ def answer_policy(
     enabled: bool,
     requires_grad: bool = False,
 ) -> torch.Tensor:
+    """Answer-fork policy from a fresh prefix cache (the cache is mutated)."""
+
     with adapters_enabled(adapters, enabled):
         logits, _ = _suffix_forward(
-            model, copy.deepcopy(prefix_cache), prefix_len, suffix_ids,
-            requires_grad=requires_grad,
+            model, prefix_cache, prefix_len, suffix_ids, requires_grad=requires_grad
         )
     return F.softmax(logits.float(), dim=-1)
 
@@ -310,15 +314,31 @@ def train_arm(
                 )
             loss = forecast_loss(distribution["probs"], item["draws"], grammar.values)
             if config.arm in ("B", "C") and config.beta_answer > 0:
-                adapted = answer_policy(
-                    env.model, prefix_cache, item["input_ids"].shape[1], item["suffix_ids"],
-                    reporter_adapters, enabled=True, requires_grad=True,
+                # Fresh prefix caches: the report walk mutates its cache.
+                adapted_cache = prefix_with_gating(
+                    env.model,
+                    item["input_ids"],
+                    reporter_adapters,
+                    adapters_on_prefix=True,
+                    requires_grad=True,
                 )
-                with torch.no_grad():
-                    frozen = answer_policy(
-                        env.model, prefix_cache, item["input_ids"].shape[1], item["suffix_ids"],
-                        reporter_adapters, enabled=False,
-                    )
+                adapted = answer_policy(
+                    env.model, adapted_cache, item["input_ids"].shape[1],
+                    item["suffix_ids"], reporter_adapters,
+                    enabled=True, requires_grad=True,
+                )
+                frozen_cache = prefix_with_gating(
+                    env.model,
+                    item["input_ids"],
+                    reporter_adapters,
+                    adapters_on_prefix=False,
+                    requires_grad=False,
+                )
+                frozen = answer_policy(
+                    env.model, frozen_cache, item["input_ids"].shape[1],
+                    item["suffix_ids"], reporter_adapters,
+                    enabled=False, requires_grad=False,
+                )
                 loss = loss + config.beta_answer * preservation_kl(adapted, frozen)
         optimizer.zero_grad()
         loss.backward()
