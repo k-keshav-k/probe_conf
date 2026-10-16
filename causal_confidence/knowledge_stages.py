@@ -298,6 +298,25 @@ def evaluation_groups(data: StateData) -> list[list[int]]:
     return groups if groups else state_groups(data)
 
 
+class StandardizedReporter:
+    """Grid reporter over standardized features.
+
+    Raw reporter features mix small probabilities with a large-scale hidden
+    block; an unstandardized MLP overfits the hidden noise (dev Brier near the
+    constant baseline).  Feature means and scales are fixed from the training
+    states, matching the baseline pipelines' StandardScaler.
+    """
+
+    def __init__(self, head: GridReportHead, mean: np.ndarray, std: np.ndarray):
+        self.head = head
+        self.mean = torch.tensor(mean, dtype=torch.float32)
+        self.std = torch.tensor(std, dtype=torch.float32)
+
+    def expected(self, x) -> np.ndarray:
+        tensor = torch.as_tensor(np.asarray(x), dtype=torch.float32)
+        return self.head.expected((tensor - self.mean) / self.std)
+
+
 def fit_pair_reporter(
     data: StateData,
     *,
@@ -306,18 +325,22 @@ def fit_pair_reporter(
     lr: float = 1e-3,
     batch_questions: int = 48,
     hidden: int = 256,
-    weight_decay: float = 1e-4,
+    weight_decay: float = 1e-2,
     seed: int = 0,
-) -> GridReportHead:
+) -> StandardizedReporter:
     """Grid-mean reporter trained with the pointwise + pair objective.
 
     ``lam=0`` is the T1 control; ``lam>0`` adds the within-question contrast
-    term with equal weight per question and per variant pair.
+    term with equal weight per question and per variant pair.  Inputs are
+    standardized with training statistics.
     """
 
     if lam < 0:
         raise ValueError("lambda must be nonnegative")
-    x = torch.tensor(data.reporter_matrix(), dtype=torch.float32)
+    raw = data.reporter_matrix().astype(np.float32)
+    mean = raw.mean(axis=0)
+    std = raw.std(axis=0) + 1e-6
+    x = torch.tensor((raw - mean) / std, dtype=torch.float32)
     targets = torch.tensor(data.success, dtype=torch.float32)
     groups = question_groups(data)
     if not groups:
@@ -337,12 +360,12 @@ def fit_pair_reporter(
             indices.extend(groups[position])
         index = torch.tensor(indices, dtype=torch.long)
         probs = head(x[index])
-        mean, _ = grid_moments(probs, grid)
-        point = (mean - targets[index]).pow(2).mean()
+        mean_value, _ = grid_moments(probs, grid)
+        point = (mean_value - targets[index]).pow(2).mean()
         loss = point
         if lam > 0:
             n_questions = len(indices) // n_variants
-            mu = mean.reshape(n_questions, n_variants)
+            mu = mean_value.reshape(n_questions, n_variants)
             target = targets[index].reshape(n_questions, n_variants)
             mu_pairs = mu[:, :, None] - mu[:, None, :]
             target_pairs = target[:, :, None] - target[:, None, :]
@@ -352,34 +375,29 @@ def fit_pair_reporter(
         loss.backward()
         optimizer.step()
     head.eval()
-    return head
+    return StandardizedReporter(head, mean, std)
 
 
-def reporter_objective(
-    head: GridReportHead, data: StateData, *, lam: float
-) -> dict:
+def reporter_objective(head, data: StateData, *, lam: float) -> dict:
     """Point risk, contrast risk, and their ``lam``-weighted total on ``data``.
 
     The pair term is always computed; ``lam`` only scales it in ``total`` so
     development selection can compare heads with one fixed weight.
     """
 
-    x = torch.tensor(data.reporter_matrix(), dtype=torch.float32)
+    mean = torch.tensor(head.expected(data.reporter_matrix()), dtype=torch.float32)
     targets = torch.tensor(data.success, dtype=torch.float32)
-    with torch.no_grad():
-        probs = head(x)
-        mean, _ = grid_moments(probs, grid_tensor())
-        point = float((mean - targets).pow(2).mean())
-        groups = question_groups(data)
-        pair = float("nan")
-        if groups:
-            n_variants = len(groups[0])
-            index = torch.tensor([i for group in groups for i in group], dtype=torch.long)
-            mu = mean[index].reshape(len(groups), n_variants)
-            target = targets[index].reshape(len(groups), n_variants)
-            mu_pairs = mu[:, :, None] - mu[:, None, :]
-            target_pairs = target[:, :, None] - target[:, None, :]
-            pair = float((mu_pairs - target_pairs).pow(2).mean())
+    point = float((mean - targets).pow(2).mean())
+    groups = question_groups(data)
+    pair = float("nan")
+    if groups:
+        n_variants = len(groups[0])
+        index = torch.tensor([i for group in groups for i in group], dtype=torch.long)
+        mu = mean[index].reshape(len(groups), n_variants)
+        target = targets[index].reshape(len(groups), n_variants)
+        mu_pairs = mu[:, :, None] - mu[:, None, :]
+        target_pairs = target[:, :, None] - target[:, None, :]
+        pair = float((mu_pairs - target_pairs).pow(2).mean())
     return {"point": point, "pair": pair, "total": point + lam * pair}
 
 

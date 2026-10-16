@@ -225,6 +225,42 @@ class ReporterFittingTests(unittest.TestCase):
         self.assertIsNone(comparison["contrast_reduction"])
         self.assertIsNone(comparison["contrast_ci"])
 
+    def test_standardization_handles_large_hidden_scale(self):
+        """A big uninformative hidden block must not wreck held-out accuracy."""
+
+        from causal_confidence.knowledge_stages import fit_pair_reporter
+
+        def make(seed: int):
+            generator = np.random.default_rng(seed)
+            n = 400
+            known = generator.random(n) < 0.5
+            signal = np.where(known, 0.6, 0.05) + generator.normal(0, 0.05, n)
+            hidden = generator.normal(0, 8.0, (n, 128)).astype(np.float32)
+            question = np.zeros((n, 6), dtype=np.float32)
+            prefix = np.stack([signal] * 6, axis=1).astype(np.float32)
+            outcomes = np.stack(
+                [
+                    (generator.random(8) < np.clip(np.where(known, 0.8, 0.05)[i], 0, 1)).astype(np.float32)
+                    for i in range(n)
+                ]
+            )
+            return StateData(
+                fact_ids=[f"q{i % 100}" for i in range(n)],
+                subject_ids=[f"s{i % 25}" for i in range(n)],
+                variant_ids=[i // 100 for i in range(n)],
+                features=BaselineFeatures(
+                    {"question": question, "prefix": prefix, "hidden": hidden}
+                ),
+                outcomes=outcomes,
+            )
+
+        train = make(1)
+        test = make(2)
+        head = fit_pair_reporter(train, lam=0.0, steps=600, seed=0)
+        report = evaluate_reporter(head, test, label="scaled")
+        self.assertLess(report["brier"], 0.1)
+        self.assertGreater(report["calibration"]["slope"], 0.5)
+
     def test_lambda_selection_prefers_pair_on_dev(self):
         train = synthetic_states(seed=0)
         dev = synthetic_states(seed=5)
