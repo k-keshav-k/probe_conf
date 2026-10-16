@@ -63,7 +63,15 @@ def collect(env, facts, state_paths, layers, rank, template, draws, seed, label)
                 data["fact_ids"].append(fact.fact_id)
                 data["variant_ids"].append(variant)
         print(f"  {label}: variant {variant} collected", flush=True)
-    return {key: np.asarray(value) for key, value in data.items()}
+    return {
+        "question": np.concatenate(data["question"], axis=0),
+        "prefix": np.concatenate(data["prefix"], axis=0),
+        "rich": np.concatenate(data["rich"], axis=0),
+        "hidden": np.stack(data["hidden"]),
+        "outcomes": np.asarray(data["outcomes"]),
+        "fact_ids": np.asarray(data["fact_ids"]),
+        "variant_ids": np.asarray(data["variant_ids"]),
+    }
 
 
 def ridge_fit_predict(x_train, y_train, x_test, alpha=1.0):
