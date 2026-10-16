@@ -157,7 +157,8 @@ def synthetic_states(seed: int = 0, questions: int = 12, variants: int = 4) -> S
     )
 
 
-class ReporterFittingTests(unittest.TestCase):    def test_pair_objective_reduces_contrast_error(self):
+class ReporterFittingTests(unittest.TestCase):
+    def test_pair_objective_reduces_contrast_error(self):
         train = synthetic_states(seed=0)
         test = synthetic_states(seed=1)
         groups = question_groups(train)
