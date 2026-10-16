@@ -464,6 +464,21 @@ def leakage_scan(texts: list[str], forbidden: list[str]) -> dict:
     return {"n_texts": len(texts), "n_forbidden": len(forbidden), "hits": hits, "clean": not hits}
 
 
+def mask_subject_name(text: str, subject_name: str) -> str:
+    """Replace the subject's own name before the gold scan.
+
+    The question legitimately contains the subject name, and some gold
+    references are substrings of it: "Henry VII" is a substring of "Henry
+    VIII", and place words can appear in titles ("James V of Scotland").
+    Those are properties of the question, not leaks introduced by the
+    pipeline.  A gold appearing outside the subject name still fails.
+    """
+
+    if not subject_name:
+        return text
+    return text.replace(str(subject_name), " <subject> ")
+
+
 def per_item_leakage_scan(items: list[tuple[str, list[str]]]) -> dict:
     """Scan each text against only its own forbidden strings.
 

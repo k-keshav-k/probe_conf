@@ -20,7 +20,7 @@ import numpy as np
 import torch
 
 from . import interventions as iv
-from .data import Question, audit_references, per_item_leakage_scan
+from .data import Question, audit_references, mask_subject_name, per_item_leakage_scan
 from .episodes import (
     adapters_enabled,
     answer_suffix_ids,
@@ -289,16 +289,16 @@ def run_p1(
         "max_abs_frequency_gap": float((empirical - expected).abs().max().item()),
     }
 
-    # Leakage audit: a prompt may not contain its own gold references or any
-    # condition name.  Cross-question scans produce false positives when one
-    # question's gold appears inside another subject's name, so each prompt is
-    # scanned against only its own forbidden strings.
+    # Leakage audit: a prompt may not contain its own gold references outside
+    # the subject's own name, and no condition name anywhere.  The subject
+    # name is masked first because golds can be substrings of it ("Henry VII"
+    # in "Henry VIII"); cross-question scans are not used at all.
     from .episodes import build_prefix_text
     from .protocol import ANSWER_SUFFIX, CONDITION_SLOTS, REPORT_SUFFIX
 
     leakage_items = [
         (
-            build_prefix_text(question.question_text),
+            mask_subject_name(build_prefix_text(question.question_text), question.subject_name),
             list(question.references) + list(CONDITION_SLOTS),
         )
         for question in questions
@@ -306,6 +306,7 @@ def run_p1(
     leakage_items.append((ANSWER_SUFFIX, list(CONDITION_SLOTS)))
     leakage_items.append((REPORT_SUFFIX, list(CONDITION_SLOTS)))
     leakage = per_item_leakage_scan(leakage_items)
+    leakage["subject_masked"] = True
 
     contract = {
         "question_id": question.question_id,

@@ -183,18 +183,17 @@ def command_p1(args) -> int:
     from .outcomes import write_banks
 
     write_banks(paths["outcomes"] / "p1_discovery_banks.json", banks, stage="p1")
-    print(
-        json.dumps(
-            {
-                "contract_passed": result["contract"]["passed"],
-                "failed_checks": result["contract"].get("failed_checks", []),
-                "mean_success": result["answer_policy"]["mean_success"],
-                "not_at_floor": result["answer_policy"]["not_at_floor"],
-                "n_questions": result["n_questions"],
-            },
-            indent=2,
-        )
-    )
+    failed_checks = result["contract"].get("failed_checks", [])
+    summary = {
+        "contract_passed": result["contract"]["passed"],
+        "failed_checks": failed_checks,
+        "mean_success": result["answer_policy"]["mean_success"],
+        "not_at_floor": result["answer_policy"]["not_at_floor"],
+        "n_questions": result["n_questions"],
+    }
+    if "leakage" in failed_checks:
+        summary["leakage_hits"] = result["contract"]["leakage"]["hits"][:20]
+    print(json.dumps(summary, indent=2))
     return 0 if result["contract"]["passed"] else 1
 
 

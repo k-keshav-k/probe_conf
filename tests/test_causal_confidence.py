@@ -538,6 +538,24 @@ class DataContracts(unittest.TestCase):
         # Short needles are skipped to avoid accidental substring hits.
         self.assertTrue(per_item_leakage_scan([("city of Ur", ["Ur"])])["clean"])
 
+    def test_subject_masking_fixes_hereditary_name_overlap(self):
+        from causal_confidence.data import mask_subject_name
+
+        prompt = "Question: Who is the father of Henry VIII?"
+        # The gold "Henry VII" is a literal substring of the subject name.
+        self.assertFalse(
+            per_item_leakage_scan([(prompt, ["Henry VII"])])["clean"]
+        )
+        masked = mask_subject_name(prompt, "Henry VIII")
+        self.assertTrue(per_item_leakage_scan([(masked, ["Henry VII"])])["clean"])
+        # A gold outside the subject name still fails.
+        leaky = prompt + " The answer is Thomas More."
+        self.assertFalse(
+            per_item_leakage_scan(
+                [(mask_subject_name(leaky, "Henry VIII"), ["Thomas More"])]
+            )["clean"]
+        )
+
     def test_cohort_loader_without_question_id(self):
         """The real cohort schema may lack ``question_id``; the fallback must work."""
 
