@@ -398,7 +398,12 @@ class _variant_installed:
 # ---------------------------------------------------------------------------
 @torch.no_grad()
 def emit_report(env, item, grammar: GridGrammar, *, arm: str, reporter_adapters) -> dict:
-    """Greedy constrained decoding of an actual number for one item."""
+    """Greedy constrained decoding plus the mean-report diagnostic.
+
+    A report distribution can improve while its greedy string does not move,
+    so both the actually emitted number and the expected value under the
+    constrained distribution are recorded (plan section 8.1).
+    """
 
     with _variant_installed(env, item):
         prefix_cache = prefix_with_gating(
@@ -409,9 +414,8 @@ def emit_report(env, item, grammar: GridGrammar, *, arm: str, reporter_adapters)
             requires_grad=False,
         )
         with adapters_enabled(reporter_adapters, True):
-            from .reporters import greedy_constrained_report
-
             from .episodes import PrefixRun
+            from .reporters import greedy_constrained_report
 
             state = PrefixRun(
                 cache=prefix_cache,
@@ -424,4 +428,19 @@ def emit_report(env, item, grammar: GridGrammar, *, arm: str, reporter_adapters)
             report = greedy_constrained_report(
                 env.model, state, item["suffix_ids"], env.tokenizer
             )
-    return {"string": report.string, "value": report.value, "valid": report.valid}
+            distribution = grid_distribution_on_cache(
+                env.model,
+                copy.deepcopy(prefix_cache),
+                int(item["input_ids"].shape[1]),
+                item["suffix_ids"],
+                grammar,
+                requires_grad=False,
+            )
+            values = grammar.values.to(distribution["probs"].device)
+            expected = float((distribution["probs"] * values).sum())
+    return {
+        "string": report.string,
+        "value": report.value,
+        "valid": report.valid,
+        "expected": expected,
+    }

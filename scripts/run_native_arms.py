@@ -257,16 +257,19 @@ def main() -> int:
                     "subject_id": item["subject_id"],
                     "variant": item["variant"],
                     "value": report["value"],
+                    "expected": report["expected"],
                     "valid": report["valid"],
                     "draws": item["draws"].tolist(),
                 }
             )
         values = np.asarray([row["value"] for row in emitted], dtype=np.float64)
+        expected_values = np.asarray([row["expected"] for row in emitted], dtype=np.float64)
         draws_matrix = np.stack([np.asarray(row["draws"], dtype=np.float64) for row in emitted])
         brier = float(((values[:, None] - draws_matrix) ** 2).mean())
+        expected_brier = float(((expected_values[:, None] - draws_matrix) ** 2).mean())
         emitted_success = draws_matrix.mean(axis=1)
         # Within-question tracking across variants.
-        spread, contrast = [], []
+        spread, contrast, expected_spread = [], [], []
         by_fact: dict[str, list[int]] = {}
         for index, row in enumerate(emitted):
             by_fact.setdefault(row["fact_id"], []).append(index)
@@ -274,8 +277,12 @@ def main() -> int:
             if len(indices) < 2:
                 continue
             v = values[indices]
+            e = expected_values[indices]
             s = emitted_success[indices]
             spread.append(float(np.corrcoef(v, s)[0, 1]) if v.std() > 0 and s.std() > 0 else 0.0)
+            expected_spread.append(
+                float(np.corrcoef(e, s)[0, 1]) if e.std() > 0 and s.std() > 0 else 0.0
+            )
             difference = (v[:, None] - v[None, :]) - (s[:, None] - s[None, :])
             contrast.append(float((difference**2).mean()))
         # Answer accuracy with the shared computation on versus frozen.
@@ -292,16 +299,22 @@ def main() -> int:
         results["arms"][arm] = {
             "training": training,
             "emitted_brier": brier,
+            "expected_brier": expected_brier,
             "emitted_valid_rate": float(np.mean([row["valid"] for row in emitted])),
             "within_question_correlation": float(np.mean(spread)) if spread else None,
+            "expected_within_question_correlation": float(np.mean(expected_spread))
+            if expected_spread
+            else None,
             "within_question_contrast": float(np.mean(contrast)) if contrast else None,
             "answer_accuracy_enabled": float(np.mean(accuracy_enabled)),
             "answer_accuracy_frozen": float(np.mean(accuracy_frozen)),
             "emitted": emitted,
         }
         print(
-            f"arm {arm}: emitted Brier {brier:.4f} valid {results['arms'][arm]['emitted_valid_rate']:.3f} "
+            f"arm {arm}: emitted Brier {brier:.4f} (expected {expected_brier:.4f}) "
             f"corr {results['arms'][arm]['within_question_correlation']} "
+            f"(expected {results['arms'][arm]['expected_within_question_correlation']}) "
+            f"valid {results['arms'][arm]['emitted_valid_rate']:.3f} "
             f"acc enabled {results['arms'][arm]['answer_accuracy_enabled']:.3f} "
             f"frozen {results['arms'][arm]['answer_accuracy_frozen']:.3f}",
             flush=True,
