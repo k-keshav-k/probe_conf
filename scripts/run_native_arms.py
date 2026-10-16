@@ -225,8 +225,8 @@ def main() -> int:
             v = values[indices]
             s = emitted_success[indices]
             spread.append(float(np.corrcoef(v, s)[0, 1]) if v.std() > 0 and s.std() > 0 else 0.0)
-            contrast.append(
-                float(((v[:, None] - v[None, :]) - (s[:, None] - s[None, :])) ** 2).mean())
+            difference = (v[:, None] - v[None, :]) - (s[:, None] - s[None, :])
+            contrast.append(float((difference**2).mean()))
         # Answer accuracy with the shared computation on versus frozen.
         stride = max(1, len(test_items) // max(1, args.accuracy_items))
         accuracy_subset = test_items[::stride][: args.accuracy_items]
